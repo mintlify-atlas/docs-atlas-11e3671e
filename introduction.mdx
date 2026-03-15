@@ -1,0 +1,84 @@
+---
+title: "Introduction"
+description: "okfetch is a typed HTTP client toolkit for TypeScript that returns results instead of throwing exceptions."
+---
+
+okfetch is a collection of TypeScript packages for making HTTP requests in a safe, predictable way. Rather than throwing exceptions on failure, every request returns a `Result<T, E>` from [better-result](https://github.com/thefrontside/better-result). You pattern-match or check the result explicitly — there are no surprises at runtime.
+
+<Info>
+  okfetch is built for TypeScript-first environments. All packages ship full type definitions and are designed to work with Zod schemas for runtime validation.
+</Info>
+
+## Packages
+
+okfetch is a monorepo. Install only the packages you need.
+
+<Columns cols={3}>
+  <Card title="@okfetch/fetch" icon="bolt">
+    The transport core. Typed requests, Zod response validation, retries, authentication, plugins, and SSE streaming. This is the foundation every other package builds on.
+  </Card>
+  <Card title="@okfetch/api" icon="code">
+    A typed API client generator. Define your endpoint tree once with schemas and path params, then call endpoints as typed methods — no manual URL construction.
+  </Card>
+  <Card title="@okfetch/logger" icon="file-text">
+    A pino-based logging plugin for `@okfetch/fetch`. Drop it in to get structured request and response logs with zero configuration.
+  </Card>
+</Columns>
+
+## The Result pattern
+
+okfetch never throws for expected failures. Every call to `okfetch()` or a typed API client method returns a `Promise<Result<T, OkfetchError>>`.
+
+A `Result` is either `Ok<T>` (success) or `Err<E>` (failure). You handle both cases explicitly:
+
+```typescript
+const result = await okfetch("https://api.example.com/users/1", {
+  outputSchema: userSchema,
+});
+
+// Option 1: pattern match
+result.match({
+  ok: (user) => console.log(user.name),
+  err: (error) => console.error(error._tag, error.message),
+});
+
+// Option 2: guard checks
+if (result.isOk()) {
+  console.log(result.value.name);
+} else {
+  console.error(result.error.message);
+}
+```
+
+<Note>
+  The `_tag` property on errors identifies the error type without requiring `instanceof` checks. Possible values are `FetchError`, `TimeoutError`, `ApiError`, `ParseError`, `ValidationError`, and `PluginError`.
+</Note>
+
+## Key features
+
+<Columns cols={2}>
+  <Card title="Zod validation" icon="shield-check">
+    Pass an `outputSchema` to any request and okfetch validates the response body at runtime. A failed validation returns a `ValidationError` result — it never throws.
+  </Card>
+  <Card title="Typed error classes" icon="triangle-alert">
+    Errors are structured objects with a `_tag` discriminant. Distinguish network failures, timeouts, HTTP errors, parse failures, and validation errors without try/catch.
+  </Card>
+  <Card title="Typed API clients" icon="layers">
+    `@okfetch/api` generates a fully-typed client from an endpoint schema tree. Path params, request bodies, and response types are all inferred from your Zod schemas.
+  </Card>
+  <Card title="Retries and auth" icon="rotate-cw">
+    Built-in retry logic and authentication helpers in `@okfetch/fetch`. Compose plugins to extend behaviour without modifying core request logic.
+  </Card>
+  <Card title="SSE streaming" icon="radio">
+    First-class support for Server-Sent Events in `@okfetch/fetch`. Stream responses are handled as typed async iterables.
+  </Card>
+  <Card title="Structured logging" icon="list">
+    `@okfetch/logger` integrates with pino to emit structured logs for every request and response. Plug it in as a single-line addition to your fetch config.
+  </Card>
+</Columns>
+
+## Next steps
+
+<Card title="Quickstart" icon="rocket" href="/quickstart">
+  Install okfetch and make your first typed request in under five minutes.
+</Card>

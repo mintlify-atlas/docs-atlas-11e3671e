@@ -1,0 +1,130 @@
+---
+title: "logger()"
+description: "Structured request/response logging plugin for okfetch, powered by pino."
+---
+
+`logger` is a plugin factory exported by `@okfetch/logger`. It returns an `OkfetchPlugin` that logs each stage of a request lifecycle using [pino](https://getpino.io).
+
+## Signature
+
+```typescript
+const logger = (options?: LoggerOptions): OkfetchPlugin
+```
+
+## Parameters
+
+<ParamField path="options" type="LoggerOptions">
+  Optional configuration for the logger plugin.
+
+  <Expandable title="LoggerOptions fields">
+    <ParamField path="pinoOptions" type="pino.LoggerOptions">
+      Options passed directly to `pino()` when creating the logger instance. Use this to configure log level, formatting, transport, redaction, and any other pino feature.
+
+      ```typescript
+      pinoOptions: {
+        level: "debug",
+        transport: {
+          target: "pino-pretty",
+          options: { colorize: true },
+        },
+      }
+      ```
+    </ParamField>
+
+    <ParamField path="logDataOnSuccess" type="boolean" default="false">
+      When `true`, the parsed response body is included in the success log entry. Useful for debugging but may be noisy in production.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Hooks
+
+The logger plugin implements four lifecycle hooks:
+
+| Hook | Log message |
+|---|---|
+| `onRequest` | `Sending request to [METHOD] URL` |
+| `onSuccess` | `Request succeeded with status STATUS` (+ `data` if `logDataOnSuccess: true`) |
+| `onFail` | `Request failed [ERROR_TAG] ERROR_MESSAGE` |
+| `onRetry` | `Request failed [ERROR_TAG], retrying attempt N...` |
+
+All messages are logged at the `info` level by default (configurable via `pinoOptions.level`).
+
+## Basic usage
+
+```typescript
+import { okfetch } from "@okfetch/fetch";
+import { logger } from "@okfetch/logger";
+
+const result = await okfetch("https://api.example.com/users", {
+  method: "GET",
+  plugins: [logger()],
+});
+```
+
+Sample output:
+
+```
+{"level":30,"time":1710000000000,"msg":"Sending request to GET https://api.example.com/users"}
+{"level":30,"time":1710000001234,"msg":"Request succeeded with status 200"}
+```
+
+## Logging response data on success
+
+```typescript
+import { okfetch } from "@okfetch/fetch";
+import { logger } from "@okfetch/logger";
+
+const result = await okfetch("https://api.example.com/users/1", {
+  method: "GET",
+  plugins: [logger({ logDataOnSuccess: true })],
+});
+```
+
+When `logDataOnSuccess` is `true` the parsed response body is included in the success log:
+
+```
+{"level":30,"time":1710000001234,"msg":"Request succeeded with status 200","data":{"id":"1","name":"Alice"}}
+```
+
+## Custom pino configuration
+
+```typescript
+import { okfetch } from "@okfetch/fetch";
+import { logger } from "@okfetch/logger";
+
+const loggerPlugin = logger({
+  pinoOptions: {
+    level: "debug",
+    redact: ["headers.authorization"], // redact sensitive headers
+    transport: {
+      target: "pino-pretty",
+      options: {
+        colorize: true,
+        translateTime: "SYS:standard",
+      },
+    },
+  },
+  logDataOnSuccess: false,
+});
+
+const result = await okfetch("https://api.example.com/users", {
+  method: "GET",
+  plugins: [loggerPlugin],
+});
+```
+
+## Usage with createApi
+
+Pass `logger()` in the global `plugins` array to log every request made through the API client:
+
+```typescript
+import { createApi } from "@okfetch/api";
+import { logger } from "@okfetch/logger";
+
+const api = createApi({
+  baseURL: "https://api.example.com",
+  endpoints,
+  plugins: [logger({ logDataOnSuccess: true })],
+});
+```

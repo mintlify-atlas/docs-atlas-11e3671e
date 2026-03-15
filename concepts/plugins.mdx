@@ -1,0 +1,183 @@
+---
+title: "Plugins"
+description: "Extend okfetch with plugins that hook into the request lifecycle for logging, auth, caching, and more."
+---
+
+Plugins let you intercept and modify requests and responses, observe outcomes, and inject shared configuration. Each plugin declares a name, version, and the hooks it wants to use.
+
+## Plugin interface
+
+```typescript
+type OkfetchPlugin<TData = unknown, TErr = unknown> = {
+  name: string;
+  version: string;
+  init?: (input: OkfetchPluginInitInput) => OkfetchPluginInitInput | undefined | Promise<...>;
+  hooks?: OkfetchPluginHooks<TData, TErr>;
+};
+```
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `name` | Yes | Identifier used in `PluginError.pluginName` |
+| `version` | Yes | Semver string for the plugin version |
+| `init` | No | Runs once when the plugin is registered; can modify shared options |
+| `hooks` | No | Object of lifecycle hook functions |
+
+## Hooks
+
+### init
+
+Called once when the plugin is attached. Receives the current `OkfetchPluginInitInput` (shared options like `baseURL`, `headers`, `timeout`) and can return a modified copy. Return `undefined` to leave options unchanged.
+
+```typescript
+const myPlugin: OkfetchPlugin = {
+  name: "my-plugin",
+  version: "1.0.0",
+  init(input) {
+    // Add a default header for all requests
+    return {
+      ...input,
+      headers: {
+        ...input.headers,
+        "X-Client": "my-app",
+      },
+    };
+  },
+};
+```
+
+### onRequest
+
+Called before each request is sent. Receives the current `OkfetchRequestContext` (URL, method, headers, body, signal) and can return a modified context. Return `undefined` to use the original context.
+
+```typescript
+hooks: {
+  onRequest(context) {
+    // Append a timestamp query parameter
+    context.url.searchParams.set("_t", String(Date.now()));
+    return context;
+  },
+}
+```
+
+### onResponse
+
+Called after a response is received, before it is parsed. Receives the request context and the raw `Response` object. Return a modified `Response` or `undefined` to use the original.
+
+```typescript
+hooks: {
+  onResponse(context, response) {
+    console.log(`${context.method} ${context.url} -> ${response.status}`);
+    // Return undefined to leave the response unchanged
+  },
+}
+```
+
+### onSuccess
+
+Called after a request succeeds and the response body is parsed (and validated, if a schema was provided). Receives the context, the raw response, and the final typed data. Return value is ignored.
+
+```typescript
+hooks: {
+  onSuccess(context, response, data) {
+    analytics.track("api_success", {
+      url: context.url.toString(),
+      status: response.status,
+    });
+  },
+}
+```
+
+### onFail
+
+Called whenever a request produces an error result. Receives the context, the raw response (may be `undefined` for network errors), and the typed `OkfetchError`. Return value is ignored.
+
+```typescript
+hooks: {
+  onFail(context, response, error) {
+    console.error(
+      `${context.method} ${context.url} failed: [${error._tag}] ${error.message}`
+    );
+  },
+}
+```
+
+### onRetry
+
+Called each time a request is about to be retried. Receives the context, the response (may be `undefined`), the error that triggered the retry, and the current attempt number (1-indexed).
+
+```typescript
+hooks: {
+  onRetry(context, response, error, attempt) {
+    console.warn(
+      `Retrying ${context.url} (attempt ${attempt}): ${error._tag}`
+    );
+  },
+}
+```
+
+## Hook return values
+
+| Hook | Returns | Effect of returning `undefined` |
+| --- | --- | --- |
+| `init` | `OkfetchPluginInitInput \| undefined` | Use the original input unchanged |
+| `onRequest` | `OkfetchRequestContext \| undefined` | Use the original context unchanged |
+| `onResponse` | `Response \| undefined` | Use the original response unchanged |
+| `onSuccess` | `void` | — |
+| `onFail` | `void` | — |
+| `onRetry` | `void` | — |
+
+<Note>All hook functions may be `async`. okfetch `await`s `init`, `onRequest`, and `onResponse` before continuing. `onSuccess`, `onFail`, and `onRetry` are fire-and-forget — errors from these hooks are not caught or surfaced.</Note>
+
+## Error handling
+
+If `init`, `onRequest`, or `onResponse` throws, okfetch wraps the error in a `PluginError` and returns it as the result. The `pluginName` and `hook` fields identify the source.
+
+```typescript
+if (result.isErr() && result.error._tag === "PluginError") {
+  console.error(
+    `Plugin "${result.error.pluginName}" failed in ${result.error.hook}`
+  );
+}
+```
+
+## Example: timing plugin
+
+A plugin that logs request timing and any failures:
+
+```typescript
+import type { OkfetchPlugin } from "@okfetch/fetch";
+
+export const timingPlugin: OkfetchPlugin = {
+  name: "timing",
+  version: "1.0.0",
+  hooks: {
+    onRequest(context) {
+      console.log(`--> ${context.method} ${context.url}`);
+      // Return undefined — no changes to the context
+    },
+    onFail(context, response, error) {
+      console.error(
+        `<-- ${context.method} ${context.url} [${error._tag}] ${error.message}`
+      );
+    },
+  },
+};
+```
+
+## Registering plugins
+
+Pass plugins in the `plugins` array, either globally via `createApi` or per-request via `okfetch`:
+
+```typescript
+// Global — applies to all requests
+const api = createApi({
+  baseURL: "https://api.example.com",
+  plugins: [timingPlugin],
+});
+
+// Per-request
+const result = await okfetch("/users", {
+  plugins: [timingPlugin],
+});
+```

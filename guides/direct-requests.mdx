@@ -1,0 +1,234 @@
+---
+title: "Direct requests"
+description: "Use @okfetch/fetch to make HTTP requests with full type safety, without a defined API client."
+---
+
+The `@okfetch/fetch` package lets you make one-off HTTP requests with built-in support for URL building, authentication, retries, and Zod-validated responses.
+
+## Installation
+
+<CodeGroup>
+
+```bash npm
+npm install @okfetch/fetch
+```
+
+```bash yarn
+yarn add @okfetch/fetch
+```
+
+```bash bun
+bun add @okfetch/fetch
+```
+
+</CodeGroup>
+
+## Basic GET request
+
+```typescript
+import { okfetch } from "@okfetch/fetch";
+
+const result = await okfetch("https://api.example.com/health", {
+  method: "GET",
+});
+
+if (result.ok) {
+  console.log(result.value);
+} else {
+  console.error(result.error);
+}
+```
+
+All calls return a `Result` — either `{ ok: true, value }` or `{ ok: false, error }`. There are no thrown exceptions to catch.
+
+## POST with a request body
+
+```typescript
+import { okfetch } from "@okfetch/fetch";
+import { z } from "zod/v4";
+
+const userSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string(),
+});
+
+const result = await okfetch("https://api.example.com/users", {
+  method: "POST",
+  body: { name: "Alice", email: "alice@example.com" },
+  outputSchema: userSchema,
+});
+
+if (result.ok) {
+  // result.value is typed as { id: number; name: string; email: string }
+  console.log("Created user:", result.value.id);
+} else {
+  console.error("Failed:", result.error.message);
+}
+```
+
+When `outputSchema` is provided, the response body is validated against it and `result.value` is fully typed.
+
+## URL building with params and query
+
+Use `baseURL` for a shared host, `params` for path parameters, and `query` for query string values.
+
+```typescript
+import { okfetch } from "@okfetch/fetch";
+
+const result = await okfetch("/users/:id/posts", {
+  baseURL: "https://api.example.com",
+  method: "GET",
+  params: { id: 42 },
+  query: {
+    status: "published",
+    tags: ["typescript", "api"],
+    page: 1,
+  },
+});
+
+// Resolves to:
+// GET https://api.example.com/users/42/posts?status=published&tags=typescript&tags=api&page=1
+```
+
+`params` values replace `:named` segments in the path. `query` values are appended as a query string — arrays produce repeated keys.
+
+## Authentication
+
+<Tabs>
+  <Tab title="Bearer token">
+
+```typescript
+const result = await okfetch("https://api.example.com/me", {
+  method: "GET",
+  auth: {
+    type: "bearer",
+    token: "my-access-token",
+  },
+});
+```
+
+  </Tab>
+  <Tab title="Basic auth">
+
+```typescript
+const result = await okfetch("https://api.example.com/me", {
+  method: "GET",
+  auth: {
+    type: "basic",
+    username: "alice",
+    password: "secret",
+  },
+});
+```
+
+  </Tab>
+  <Tab title="Custom header">
+
+```typescript
+const result = await okfetch("https://api.example.com/me", {
+  method: "GET",
+  auth: {
+    type: "custom",
+    header: "X-Api-Key",
+    value: "my-api-key",
+  },
+});
+```
+
+  </Tab>
+</Tabs>
+
+## Timeout
+
+Pass `timeout` in milliseconds to abort the request if it takes too long.
+
+```typescript
+const result = await okfetch("https://api.example.com/slow-endpoint", {
+  method: "GET",
+  timeout: 3000, // 3 seconds
+});
+
+if (!result.ok) {
+  if (result.error._tag === "TimeoutError") {
+    console.error("Request timed out");
+  }
+}
+```
+
+## Retry
+
+Use `retry` to automatically retry failed requests. Three backoff strategies are supported.
+
+<Tabs>
+  <Tab title="Fixed">
+
+```typescript
+const result = await okfetch("https://api.example.com/data", {
+  method: "GET",
+  retry: {
+    strategy: "fixed",
+    attempts: 3,
+    delay: 500, // ms between each retry
+  },
+});
+```
+
+  </Tab>
+  <Tab title="Linear">
+
+```typescript
+const result = await okfetch("https://api.example.com/data", {
+  method: "GET",
+  retry: {
+    strategy: "linear",
+    attempts: 4,
+    delay: 200, // delay increases linearly: 200, 400, 600, ...
+  },
+});
+```
+
+  </Tab>
+  <Tab title="Exponential">
+
+```typescript
+const result = await okfetch("https://api.example.com/data", {
+  method: "GET",
+  retry: {
+    strategy: "exponential",
+    attempts: 5,
+    delay: 100, // delay doubles each time: 100, 200, 400, ...
+  },
+});
+```
+
+  </Tab>
+</Tabs>
+
+## Validating error responses
+
+Provide `errorSchema` and `shouldValidateError` to parse structured error bodies from the API.
+
+```typescript
+import { z } from "zod/v4";
+
+const apiErrorSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+});
+
+const result = await okfetch("https://api.example.com/users/999", {
+  method: "GET",
+  apiErrorDataSchema: apiErrorSchema,
+  shouldValidateError: (status) => status >= 400 && status < 500,
+});
+
+if (!result.ok) {
+  // result.error.data is typed as { code: string; message: string }
+  console.error(result.error.data?.code);
+}
+```
+
+<Tip>
+  For repeating these options across many calls, consider using `createApi` from `@okfetch/api` to define defaults once.
+</Tip>

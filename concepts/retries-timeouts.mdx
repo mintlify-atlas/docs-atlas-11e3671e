@@ -1,0 +1,180 @@
+---
+title: "Retries and timeouts"
+description: "Configure automatic retries with fixed, linear, or exponential backoff, and set per-request timeouts."
+---
+
+## Timeouts
+
+Pass `timeout` (in milliseconds) to abort a request that takes too long. When the timeout is exceeded, the result is an `Err` with a `TimeoutError`.
+
+```typescript
+const result = await okfetch("/users", {
+  timeout: 5000, // 5 seconds
+});
+
+if (result.isErr() && result.error._tag === "TimeoutError") {
+  console.error(`Request timed out after ${result.error.timout}ms`);
+}
+```
+
+<Note>The property on `TimeoutError` is spelled `timout` (missing an `e`) — this is a known quirk of the source type definition.</Note>
+
+Timeout can also be set globally on `createApi` and overridden per request:
+
+```typescript
+const api = createApi({
+  baseURL: "https://api.example.com",
+  timeout: 10000, // 10s default for all requests
+});
+
+// This request uses a shorter timeout
+const result = await api.getUser({ timeout: 2000 });
+```
+
+## Retries
+
+Pass a `retry` object to automatically retry failed requests. Three strategies are available: `fixed`, `linear`, and `exponential`.
+
+### Default retry behavior
+
+By default, okfetch retries on:
+
+- `FetchError` — network failures
+- `TimeoutError` — request timeouts
+- `ApiError` with `statusCode >= 500` — server errors
+
+Use the `shouldRetry` callback to override this behavior.
+
+### Fixed strategy
+
+Retries with a constant delay between each attempt.
+
+```typescript
+const result = await okfetch("/users", {
+  retry: {
+    strategy: "fixed",
+    attempts: 3,
+    delay: 500, // 500ms between each retry (default: 0)
+  },
+});
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `strategy` | `"fixed"` | — | Required |
+| `attempts` | `number` | — | Total number of retry attempts |
+| `delay` | `number` | `0` | Milliseconds to wait between retries |
+| `shouldRetry` | `(error) => boolean` | See above | Custom predicate to allow or block a retry |
+
+### Linear strategy
+
+Increases the delay by a fixed step on each attempt.
+
+```typescript
+const result = await okfetch("/users", {
+  retry: {
+    strategy: "linear",
+    attempts: 4,
+    initialDelay: 200, // start at 200ms
+    step: 200,         // add 200ms each attempt: 200, 400, 600, 800
+    maxDelay: 1000,    // cap at 1s
+  },
+});
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `strategy` | `"linear"` | — | Required |
+| `attempts` | `number` | — | Total number of retry attempts |
+| `initialDelay` | `number` | `100` | Delay before the first retry in ms |
+| `step` | `number` | `100` | Added to the delay on each subsequent attempt |
+| `maxDelay` | `number` | none | Maximum delay cap in ms |
+| `shouldRetry` | `(error) => boolean` | See above | Custom predicate to allow or block a retry |
+
+### Exponential strategy
+
+Multiplies the delay by a factor on each attempt. Suitable for backing off aggressively under sustained failure.
+
+```typescript
+const result = await okfetch("/users", {
+  retry: {
+    strategy: "exponential",
+    attempts: 5,
+    initialDelay: 100, // 100ms, 200ms, 400ms, 800ms, 1600ms
+    factor: 2,
+    maxDelay: 10000,   // cap at 10s
+  },
+});
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `strategy` | `"exponential"` | — | Required |
+| `attempts` | `number` | — | Total number of retry attempts |
+| `initialDelay` | `number` | `100` | Delay before the first retry in ms |
+| `factor` | `number` | `2` | Multiplier applied to the delay each attempt |
+| `maxDelay` | `number` | none | Maximum delay cap in ms |
+| `shouldRetry` | `(error) => boolean` | See above | Custom predicate to allow or block a retry |
+
+## Custom retry logic
+
+Use `shouldRetry` to retry only on specific errors or status codes:
+
+```typescript
+const result = await okfetch("/payments", {
+  retry: {
+    strategy: "exponential",
+    attempts: 3,
+    shouldRetry(error) {
+      // Only retry on network errors and 503s
+      if (error._tag === "FetchError") return true;
+      if (error._tag === "ApiError" && error.statusCode === 503) return true;
+      return false;
+    },
+  },
+});
+```
+
+<Tip>The `shouldRetry` callback receives the same typed error types as the result — you can use `error._tag` to narrow to a specific error class.</Tip>
+
+## Observing retries
+
+Use the `onRetry` plugin hook to log or monitor retry attempts:
+
+```typescript
+const retryLogger: OkfetchPlugin = {
+  name: "retry-logger",
+  version: "1.0.0",
+  hooks: {
+    onRetry(context, response, error, attempt) {
+      console.warn(
+        `Retry ${attempt}: ${context.method} ${context.url} — ${error._tag}`
+      );
+    },
+  },
+};
+```
+
+## Global vs per-request configuration
+
+Both `retry` and `timeout` can be set globally on `createApi` or overridden per request:
+
+```typescript
+const api = createApi({
+  baseURL: "https://api.example.com",
+  timeout: 8000,
+  retry: {
+    strategy: "exponential",
+    attempts: 3,
+  },
+});
+
+// This call uses a different retry strategy
+const result = await api.getUser({
+  retry: {
+    strategy: "fixed",
+    attempts: 1,
+    delay: 0,
+  },
+});
+```

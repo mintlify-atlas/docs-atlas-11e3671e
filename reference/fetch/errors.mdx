@@ -1,0 +1,230 @@
+---
+title: "Error classes"
+description: "All error types returned by okfetch and how to narrow them."
+---
+
+`okfetch` never throws. Instead, errors are returned as the `error` field of the `Result` type when `result.ok === false`. Every error class has a unique `_tag` string literal for narrowing.
+
+## Error union
+
+```typescript
+type OkfetchError<TErr> =
+  | FetchError
+  | ApiError<TErr>
+  | ParseError
+  | PluginError
+  | ValidationError
+  | TimeoutError;
+```
+
+## When each error occurs
+
+| Error | When it is returned |
+|---|---|
+| `FetchError` | The network request itself fails (connection refused, DNS failure, etc.) |
+| `TimeoutError` | The request exceeds `options.timeout` milliseconds |
+| `ApiError` | The server returns a non-2xx HTTP status code |
+| `ParseError` | The response body cannot be parsed as JSON |
+| `ValidationError` | An `outputSchema`, `apiErrorDataSchema`, or input schema fails |
+| `PluginError` | A plugin throws during `init`, `onRequest`, or `onResponse` |
+
+## Narrowing errors
+
+Use the `_tag` property in a `switch` statement or `if` checks:
+
+```typescript
+const result = await okfetch("https://api.example.com/users", { method: "GET" });
+
+if (!result.ok) {
+  switch (result.error._tag) {
+    case "FetchError":
+      console.error("Network failure:", result.error.message);
+      break;
+    case "TimeoutError":
+      console.error("Timed out after", result.error.timout, "ms");
+      break;
+    case "ApiError":
+      console.error("HTTP", result.error.statusCode, result.error.statusText);
+      break;
+    case "ParseError":
+      console.error("Bad JSON:", result.error.message);
+      break;
+    case "ValidationError":
+      console.error("Schema error on", result.error.type, result.error.zodError);
+      break;
+    case "PluginError":
+      console.error("Plugin", result.error.pluginName, "failed in", result.error.hook);
+      break;
+  }
+}
+```
+
+---
+
+## FetchError
+
+Returned when the underlying `fetch()` call rejects (network-level failure).
+
+<ResponseField name="_tag" type='"FetchError"' required>
+  Discriminant tag for narrowing.
+</ResponseField>
+
+<ResponseField name="message" type="string" required>
+  Human-readable description of the failure.
+</ResponseField>
+
+<ResponseField name="cause" type="unknown">
+  The original error thrown by `fetch`, if available.
+</ResponseField>
+
+---
+
+## TimeoutError
+
+Returned when the request duration exceeds `options.timeout`.
+
+<Warning>
+  The property name is `timout` (one `e`) due to a typo in the source. This is the actual property name on the class instance.
+</Warning>
+
+<ResponseField name="_tag" type='"TimeoutError"' required>
+  Discriminant tag for narrowing.
+</ResponseField>
+
+<ResponseField name="timout" type="number" required>
+  The timeout value (in milliseconds) that was exceeded. Note: this property name contains a typo — it is `timout`, not `timeout`.
+</ResponseField>
+
+<ResponseField name="message" type="string" required>
+  Human-readable description of the timeout.
+</ResponseField>
+
+<ResponseField name="cause" type="unknown">
+  The underlying abort error, if available.
+</ResponseField>
+
+---
+
+## ApiError
+
+Returned when the server responds with a non-2xx HTTP status. Optionally carries a typed `data` field when `apiErrorDataSchema` is provided and `shouldValidateError` returns `true` for the status code.
+
+```typescript
+class ApiError<T = unknown>
+```
+
+<ResponseField name="_tag" type='"ApiError"' required>
+  Discriminant tag for narrowing.
+</ResponseField>
+
+<ResponseField name="statusCode" type="number" required>
+  HTTP status code (e.g. `404`, `500`).
+</ResponseField>
+
+<ResponseField name="statusText" type="string" required>
+  HTTP status text (e.g. `"Not Found"`, `"Internal Server Error"`).
+</ResponseField>
+
+<ResponseField name="text" type="string">
+  Raw response body as a string, if readable.
+</ResponseField>
+
+<ResponseField name="data" type="T">
+  Parsed and validated error body. Only present when `apiErrorDataSchema` is configured and `shouldValidateError` returns `true`.
+</ResponseField>
+
+---
+
+## ParseError
+
+Returned when the response body is received but cannot be parsed as JSON.
+
+<ResponseField name="_tag" type='"ParseError"' required>
+  Discriminant tag for narrowing.
+</ResponseField>
+
+<ResponseField name="message" type="string" required>
+  Human-readable description of the parse failure.
+</ResponseField>
+
+<ResponseField name="cause" type="unknown">
+  The underlying `SyntaxError` from `JSON.parse`, if available.
+</ResponseField>
+
+---
+
+## ValidationError
+
+Returned when a Zod schema validation fails. The `type` field identifies which schema failed.
+
+<ResponseField name="_tag" type='"ValidationError"' required>
+  Discriminant tag for narrowing.
+</ResponseField>
+
+<ResponseField name="type" type='"output" | "error" | "query" | "params" | "body"' required>
+  Which schema failed validation:
+  - `"output"` — `outputSchema` failed on the response body
+  - `"error"` — `apiErrorDataSchema` failed on the error body
+  - `"query"` — query param schema failed (used by `@okfetch/api`)
+  - `"params"` — path param schema failed (used by `@okfetch/api`)
+  - `"body"` — request body schema failed (used by `@okfetch/api`)
+</ResponseField>
+
+<ResponseField name="message" type="string" required>
+  Human-readable validation error summary.
+</ResponseField>
+
+<ResponseField name="zodError" type="ZodError" required>
+  The full `ZodError` instance with detailed issue paths.
+</ResponseField>
+
+---
+
+## PluginError
+
+Returned when a plugin throws an error during a synchronous lifecycle hook.
+
+<ResponseField name="_tag" type='"PluginError"' required>
+  Discriminant tag for narrowing.
+</ResponseField>
+
+<ResponseField name="pluginName" type="string" required>
+  The `name` field of the plugin that threw.
+</ResponseField>
+
+<ResponseField name="hook" type='"init" | "onRequest" | "onResponse"' required>
+  The lifecycle hook where the error occurred.
+</ResponseField>
+
+<ResponseField name="message" type="string" required>
+  Human-readable error message.
+</ResponseField>
+
+<ResponseField name="cause" type="unknown">
+  The original error thrown by the plugin.
+</ResponseField>
+
+---
+
+## Presets
+
+Two preset functions are exported for use with `shouldValidateError`:
+
+```typescript
+import { validateClientErrors, validateAllErrors } from "@okfetch/fetch";
+```
+
+<ResponseField name="validateClientErrors" type="(statusCode: number) => boolean">
+  Returns `true` for status codes `>= 400` and `< 500` (4xx client errors only).
+</ResponseField>
+
+<ResponseField name="validateAllErrors" type="(statusCode: number) => boolean">
+  Returns `true` for any status code `>= 400` (all non-success responses).
+</ResponseField>
+
+```typescript
+const result = await okfetch("/api/resource", {
+  apiErrorDataSchema: z.object({ message: z.string() }),
+  shouldValidateError: validateClientErrors,
+});
+```

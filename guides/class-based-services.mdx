@@ -1,0 +1,183 @@
+---
+title: "Class-based services"
+description: "Use the ApiService mixin to organize your API calls into reusable, encapsulated service classes."
+---
+
+`ApiService` is an optional mixin from `@okfetch/api` that lets you wrap typed API calls inside a class. This is useful when you want to co-locate business logic with your API calls, share configuration across methods, or structure your code around domain services.
+
+<Note>
+  `ApiService` is purely optional. `createApi` works just as well standalone — use whichever style fits your codebase.
+</Note>
+
+## Basic usage
+
+Extend `ApiService(endpoints)` and call `super()` with the same options you would pass to `createApi`.
+
+```typescript
+import { ApiService, createEndpoints } from "@okfetch/api";
+import { z } from "zod/v4";
+
+const endpoints = createEndpoints({
+  posts: {
+    getById: {
+      method: "GET",
+      path: "/posts/:id",
+      output: z.object({ id: z.number(), title: z.string() }),
+      params: z.object({ id: z.number() }),
+    },
+  },
+});
+
+class BlogService extends ApiService(endpoints) {
+  constructor() {
+    super({ baseURL: "https://jsonplaceholder.typicode.com" });
+  }
+}
+```
+
+## Accessing the client with `this.api`
+
+Inside the class, `this.api` is the fully typed API client — identical to what `createApi` returns.
+
+```typescript
+class BlogService extends ApiService(endpoints) {
+  constructor() {
+    super({ baseURL: "https://jsonplaceholder.typicode.com" });
+  }
+
+  async getPost(id: number) {
+    return this.api.posts.getById({ params: { id } });
+  }
+}
+
+const service = new BlogService();
+const result = await service.getPost(1);
+
+if (result.ok) {
+  console.log(result.value.title);
+}
+```
+
+## Realistic example: multi-method service
+
+Here is a more complete example with multiple methods, business logic, and error handling all in one class.
+
+```typescript
+import { ApiService, createEndpoints } from "@okfetch/api";
+import { z } from "zod/v4";
+
+const postSchema = z.object({
+  id: z.number(),
+  userId: z.number(),
+  title: z.string(),
+  body: z.string(),
+});
+
+const endpoints = createEndpoints({
+  posts: {
+    list: {
+      method: "GET",
+      path: "/posts",
+      output: z.array(postSchema),
+      query: z.object({ userId: z.number().optional() }),
+    },
+    getById: {
+      method: "GET",
+      path: "/posts/:id",
+      output: postSchema,
+      params: z.object({ id: z.number() }),
+    },
+    create: {
+      method: "POST",
+      path: "/posts",
+      output: postSchema,
+      body: z.object({
+        title: z.string().min(1),
+        body: z.string(),
+        userId: z.number(),
+      }),
+    },
+  },
+});
+
+class PostsService extends ApiService(endpoints) {
+  constructor(private readonly userId: number) {
+    super({
+      baseURL: "https://jsonplaceholder.typicode.com",
+      timeout: 5000,
+    });
+  }
+
+  /** Fetch all posts authored by the configured user */
+  async getMyPosts() {
+    const result = await this.api.posts.list({
+      query: { userId: this.userId },
+    });
+
+    if (!result.ok) {
+      throw new Error(`Failed to fetch posts: ${result.error.message}`);
+    }
+
+    return result.value;
+  }
+
+  /** Fetch a single post, returning null if not found */
+  async findPost(id: number) {
+    const result = await this.api.posts.getById({ params: { id } });
+
+    if (!result.ok) {
+      if (result.error._tag === "ApiError" && result.error.statusCode === 404) {
+        return null;
+      }
+      throw new Error(`Unexpected error: ${result.error.message}`);
+    }
+
+    return result.value;
+  }
+
+  /** Publish a new post under the configured user */
+  async publishPost(title: string, body: string) {
+    const result = await this.api.posts.create({
+      body: { title, body, userId: this.userId },
+    });
+
+    if (!result.ok) {
+      throw new Error(`Failed to create post: ${result.error.message}`);
+    }
+
+    return result.value;
+  }
+}
+
+// Usage
+const postsService = new PostsService(1);
+const myPosts = await postsService.getMyPosts();
+const post = await postsService.findPost(5);
+const newPost = await postsService.publishPost("Hello world", "First post.");
+```
+
+## Passing constructor options
+
+`super()` accepts all the same options as `createApi`, including `headers`, `timeout`, `plugins`, `errorSchema`, and `shouldValidateError`.
+
+```typescript
+import { logger } from "@okfetch/logger";
+import { z } from "zod/v4";
+
+class PostsService extends ApiService(endpoints) {
+  constructor(authToken: string) {
+    super({
+      baseURL: "https://api.example.com",
+      headers: { Authorization: `Bearer ${authToken}` },
+      timeout: 8000,
+      plugins: [logger()],
+      errorSchema: z.object({ code: z.string(), message: z.string() }),
+      shouldValidateError: (status) => status >= 400,
+    });
+  }
+}
+```
+
+<Tip>
+  If you need to accept constructor arguments and forward them to `super()`, TypeScript will infer the correct types as long as the options match the `createApi` options interface.
+</Tip>

@@ -1,0 +1,157 @@
+---
+title: "Types"
+description: "TypeScript types exported from @okfetch/api."
+---
+
+All types below are exported from `@okfetch/api`.
+
+## EndpointDefinition
+
+Describes a single API endpoint. Used as the leaves of an `EndpointTree`.
+
+```typescript
+type EndpointDefinition = {
+  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
+  path: `/${string}`;         // must start with /
+  body?: ZodType;             // validates request body before sending
+  error?: ZodType;            // per-endpoint error schema (overrides global)
+  output?: ZodType;           // validates response body
+  params?: ZodType;           // validates URL path params
+  query?: ZodType;            // validates query string params
+  requestOptions?: EndpointRequestOverrides;
+  stream?: true;              // enables streaming for this endpoint
+};
+```
+
+---
+
+## EndpointTree
+
+A recursive map of string keys to either `EndpointDefinition` objects or nested `EndpointTree` objects.
+
+```typescript
+type EndpointTree = {
+  [key: string]: EndpointDefinition | EndpointTree;
+};
+```
+
+Trees can be nested to any depth. `createApi` mirrors the tree structure onto the returned `ApiClient`.
+
+---
+
+## CreateApiOptions
+
+Options accepted by [`createApi()`](/reference/api/create-api).
+
+```typescript
+type CreateApiOptions<TTree extends EndpointTree, TGlobalError = unknown> = {
+  baseURL: string;                                     // required
+  endpoints: TTree;                                    // required
+  errorSchema?: ZodType<TGlobalError>;                 // global error schema
+  shouldValidateError?: (statusCode: number) => boolean;
+  validateInput?: boolean;                             // default: true
+  validateOutput?: boolean;
+  // ...plus all EndpointRequestOverrides:
+  // headers, auth, timeout, retry, plugins, fetch, ...
+};
+```
+
+---
+
+## ApiClient
+
+The return type of `createApi`. A mirror of the `EndpointTree` where every `EndpointDefinition` leaf is replaced by an `EndpointFunction`.
+
+```typescript
+type ApiClient<TTree extends EndpointTree, TGlobalError = unknown> = {
+  [TKey in keyof TTree]: TTree[TKey] extends EndpointDefinition
+    ? EndpointFunction<TTree[TKey], TGlobalError>
+    : TTree[TKey] extends EndpointTree
+      ? ApiClient<TTree[TKey], TGlobalError>
+      : never;
+};
+```
+
+---
+
+## EndpointFunction
+
+The callable type generated for each endpoint. Signature depends on whether the endpoint definition has any `body`, `params`, or `query` schemas.
+
+```typescript
+// When endpoint has no body/params/query schemas:
+type ZeroOptionEndpointFunction = (
+  requestOverrides?: EndpointRequestOverrides
+) => Promise<Result<TSuccess, ApiErrors<TGlobalError>>>;
+
+// When endpoint has at least one schema (body, params, or query):
+type OptionEndpointFunction = (
+  options: EndpointCallOptions<TEndpoint>,
+  requestOverrides?: EndpointRequestOverrides
+) => Promise<Result<TSuccess, ApiErrors<TGlobalError>>>;
+```
+
+---
+
+## EndpointCallOptions
+
+The first argument to an `EndpointFunction` when the endpoint has at least one schema. Fields are derived from the endpoint's schema definitions.
+
+```typescript
+type EndpointCallOptions<TEndpoint extends EndpointDefinition> = {
+  body?: Infer<TEndpoint["body"]>;     // present if body schema defined
+  params?: Infer<TEndpoint["params"]>; // present if params schema defined
+  query?: Infer<TEndpoint["query"]>;   // present if query schema defined
+};
+```
+
+Only fields corresponding to schemas defined on the endpoint are present in the type.
+
+---
+
+## EndpointRequestOverrides
+
+Per-call overrides passed as the last argument to any endpoint function. Accepts the same fields as `OkfetchOptions` that are not endpoint-specific (i.e., everything except `method`, `body`, `outputSchema`, `apiErrorDataSchema`, `stream`).
+
+```typescript
+type EndpointRequestOverrides = {
+  headers?: Record<string, string>;
+  auth?: Auth;
+  timeout?: number;
+  retry?: RetryOptions;
+  plugins?: OkfetchPlugin[];
+  fetch?: OkfetchFetch;
+  // ...other request-level OkfetchOptions
+};
+```
+
+---
+
+## ApiErrors
+
+Alias for `OkfetchError<TError>`. The error union type returned by every `ApiClient` endpoint call.
+
+```typescript
+type ApiErrors<TError = unknown> = OkfetchError<TError>;
+```
+
+See [Error classes](/reference/fetch/errors) for all variants.
+
+---
+
+## ApiServiceClass
+
+The class constructor type returned by `ApiService()`. Instances have a `protected client` and a `public api` getter.
+
+```typescript
+type ApiServiceClass<TTree extends EndpointTree, TGlobalError = unknown> = {
+  new (
+    options: Omit<CreateApiOptions<TTree, TGlobalError>, "endpoints" | "errorSchema">
+  ): {
+    protected client: ApiClient<TTree, TGlobalError>;
+    get api(): ApiClient<TTree, TGlobalError>;
+  };
+};
+```
+
+See [`ApiService()`](/reference/api/api-service) for usage examples.

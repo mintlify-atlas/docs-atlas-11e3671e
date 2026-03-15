@@ -1,0 +1,283 @@
+---
+title: "Result-based errors"
+description: "How okfetch surfaces errors as values using the Result pattern instead of throwing exceptions."
+---
+
+okfetch never throws. Every request returns a `Result` type from [better-result](https://github.com/cevr/better-result) — either a success value or a typed error, both as plain data you can inspect and handle in one place.
+
+## The Result pattern
+
+Instead of wrapping calls in `try/catch`, you receive a `Result<TData, TError>` that is either `Ok<TData>` or `Err<TError>`. You decide how to handle it.
+
+```typescript
+const result = await okfetch<User>("/users/1");
+
+if (result.isOk()) {
+  console.log(result.value); // User
+} else {
+  console.log(result.error); // typed OkfetchError
+}
+```
+
+### Common Result methods
+
+**`.isOk()` / `.isErr()`** — type guards that narrow the result:
+
+```typescript
+const result = await okfetch<User>("/users/1");
+
+if (result.isOk()) {
+  // result.value is User
+}
+
+if (result.isErr()) {
+  // result.error is OkfetchError
+}
+```
+
+**`.map()`** — transform the success value, leaving errors unchanged:
+
+```typescript
+const nameResult = result.map((user) => user.name);
+// Result<string, OkfetchError>
+```
+
+**`.match()`** — handle both branches in one expression:
+
+```typescript
+const message = result.match({
+  Ok: (user) => `Hello, ${user.name}`,
+  Err: (error) => `Request failed: ${error.message}`,
+});
+```
+
+## Error types
+
+All errors carry a `_tag` discriminant you can use to narrow to a specific type.
+
+```typescript
+if (result.isErr()) {
+  const error = result.error;
+
+  switch (error._tag) {
+    case "FetchError":
+      // network failure
+      break;
+    case "ApiError":
+      // non-2xx response
+      console.log(error.statusCode);
+      break;
+    case "ValidationError":
+      // schema mismatch
+      console.log(error.zodError.issues);
+      break;
+  }
+}
+```
+
+<AccordionGroup>
+  <Accordion title="FetchError">
+    Returned when the underlying `fetch` call itself fails — for example, due to a network outage, DNS failure, or CORS rejection.
+
+    ```typescript
+    class FetchError extends TaggedError("FetchError")<{
+      readonly message: string;
+      readonly cause?: unknown;
+    }>()
+    ```
+
+    | Property | Type | Description |
+    | --- | --- | --- |
+    | `_tag` | `"FetchError"` | Discriminant for type narrowing |
+    | `message` | `string` | Human-readable description of the failure |
+    | `cause` | `unknown` | The original error thrown by `fetch`, if available |
+
+    ```typescript
+    if (error._tag === "FetchError") {
+      console.error("Network error:", error.message, error.cause);
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="ParseError">
+    Returned when the response body cannot be parsed as JSON. Only occurs when no `outputSchema` is provided and okfetch attempts automatic JSON parsing.
+
+    ```typescript
+    class ParseError extends TaggedError("ParseError")<{
+      readonly message: string;
+      readonly cause?: unknown;
+    }>()
+    ```
+
+    | Property | Type | Description |
+    | --- | --- | --- |
+    | `_tag` | `"ParseError"` | Discriminant for type narrowing |
+    | `message` | `string` | Description of the parse failure |
+    | `cause` | `unknown` | The original parse error, if available |
+
+    ```typescript
+    if (error._tag === "ParseError") {
+      console.error("Could not parse response body:", error.cause);
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="ValidationError">
+    Returned when a Zod schema validation fails. This applies to the response body (`outputSchema`), the API error body (`errorSchema`), and — when using `@okfetch/api` — request-side fields like `body`, `params`, and `query`.
+
+    ```typescript
+    class ValidationError extends TaggedError("ValidationError")<{
+      readonly type: "output" | "error" | "query" | "params" | "body";
+      readonly message: string;
+      readonly zodError: ZodError;
+    }>()
+    ```
+
+    | Property | Type | Description |
+    | --- | --- | --- |
+    | `_tag` | `"ValidationError"` | Discriminant for type narrowing |
+    | `type` | `"output" \| "error" \| "query" \| "params" \| "body"` | Which part of the request/response failed |
+    | `message` | `string` | Summary of the validation failure |
+    | `zodError` | `ZodError` | Full Zod error with all `.issues` |
+
+    ```typescript
+    if (error._tag === "ValidationError") {
+      console.error(`Validation failed on ${error.type}:`);
+      error.zodError.issues.forEach((issue) => {
+        console.error(`  ${issue.path.join(".")}: ${issue.message}`);
+      });
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="ApiError">
+    Returned when the server responds with a non-2xx status code. The response body is included when available and parseable.
+
+    ```typescript
+    class ApiError<T = unknown> extends TaggedError("ApiError")<{
+      readonly statusCode: number;
+      readonly statusText: string;
+      readonly text?: string;
+      readonly data?: unknown;
+    }>()
+    ```
+
+    | Property | Type | Description |
+    | --- | --- | --- |
+    | `_tag` | `"ApiError"` | Discriminant for type narrowing |
+    | `statusCode` | `number` | HTTP status code (e.g. `404`, `500`) |
+    | `statusText` | `string` | HTTP status text (e.g. `"Not Found"`) |
+    | `text` | `string \| undefined` | Raw response body text, if available |
+    | `data` | `T \| undefined` | Parsed response body — typed when `apiErrorDataSchema` is provided |
+
+    ```typescript
+    const result = await okfetch<User, ApiErrorBody>("/users/1", {
+      apiErrorDataSchema: apiErrorBodySchema,
+    });
+
+    if (result.isErr() && result.error._tag === "ApiError") {
+      const error = result.error;
+      console.error(`${error.statusCode} ${error.statusText}`);
+      console.error(error.data?.message); // typed as ApiErrorBody
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="TimeoutError">
+    Returned when a request exceeds the configured `timeout` duration.
+
+    ```typescript
+    class TimeoutError extends TaggedError("TimeoutError")<{
+      readonly timout: number; // note: typo is in the source
+      readonly message: string;
+      readonly cause?: unknown;
+    }>()
+    ```
+
+    | Property | Type | Description |
+    | --- | --- | --- |
+    | `_tag` | `"TimeoutError"` | Discriminant for type narrowing |
+    | `timout` | `number` | The timeout value in milliseconds that was exceeded |
+    | `message` | `string` | Description of the timeout |
+    | `cause` | `unknown` | The underlying abort error, if available |
+
+    <Note>The `timout` property name is a typo preserved from the source. Use `error.timout` (single `e`) to access the value.</Note>
+
+    ```typescript
+    if (error._tag === "TimeoutError") {
+      console.error(`Request timed out after ${error.timout}ms`);
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="PluginError">
+    Returned when a plugin throws during one of its lifecycle hooks (`init`, `onRequest`, or `onResponse`). Errors from `onSuccess`, `onFail`, and `onRetry` are not wrapped — they are fire-and-forget.
+
+    ```typescript
+    class PluginError extends TaggedError("PluginError")<{
+      readonly pluginName: string;
+      readonly hook: "init" | "onRequest" | "onResponse";
+      readonly message: string;
+      readonly cause?: unknown;
+    }>()
+    ```
+
+    | Property | Type | Description |
+    | --- | --- | --- |
+    | `_tag` | `"PluginError"` | Discriminant for type narrowing |
+    | `pluginName` | `string` | The `name` field of the plugin that threw |
+    | `hook` | `"init" \| "onRequest" \| "onResponse"` | Which hook failed |
+    | `message` | `string` | Error message from the plugin |
+    | `cause` | `unknown` | The original error thrown by the plugin |
+
+    ```typescript
+    if (error._tag === "PluginError") {
+      console.error(
+        `Plugin "${error.pluginName}" failed in ${error.hook}: ${error.message}`
+      );
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Exhaustive error handling
+
+Because every error type has a unique `_tag`, you can write exhaustive switch statements and be confident all cases are covered:
+
+```typescript
+import type {
+  FetchError,
+  ParseError,
+  ValidationError,
+  ApiError,
+  TimeoutError,
+  PluginError,
+} from "@okfetch/fetch";
+
+const result = await okfetch<User>("/users/1");
+
+if (result.isErr()) {
+  const error = result.error;
+
+  switch (error._tag) {
+    case "FetchError":
+      // handle network failure
+      break;
+    case "ParseError":
+      // handle unparseable body
+      break;
+    case "ValidationError":
+      // handle schema mismatch
+      break;
+    case "ApiError":
+      // handle non-2xx response
+      break;
+    case "TimeoutError":
+      // handle request timeout
+      break;
+    case "PluginError":
+      // handle plugin lifecycle failure
+      break;
+  }
+}
+```

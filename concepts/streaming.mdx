@@ -1,0 +1,91 @@
+---
+title: "Streaming"
+description: "Consume server-sent events and streaming responses with the stream option."
+---
+
+Set `stream: true` to receive the response as a `ReadableStream` instead of a parsed JSON body. This is designed for Server-Sent Events (SSE) endpoints but works with any streaming response.
+
+## Basic streaming
+
+When `stream: true` is set without an `outputSchema`, each SSE `data:` chunk is emitted as a raw string.
+
+```typescript
+const result = await okfetch("/events", {
+  stream: true,
+});
+
+if (result.isOk()) {
+  const stream = result.value; // ReadableStream<string>
+
+  for await (const chunk of stream) {
+    console.log("Received chunk:", chunk);
+  }
+}
+```
+
+## Streaming with schema validation
+
+When `outputSchema` is provided alongside `stream: true`, each `data:` chunk is JSON-parsed and validated against the schema before being emitted. Invalid chunks produce a `ValidationError` with `type === "output"`.
+
+```typescript
+import { z } from "zod";
+
+const eventSchema = z.object({
+  id: z.string(),
+  type: z.enum(["message", "error", "done"]),
+  content: z.string().optional(),
+});
+
+const result = await okfetch("/chat/stream", {
+  method: "POST",
+  body: { prompt: "Hello" },
+  stream: true,
+  outputSchema: eventSchema,
+});
+
+if (result.isOk()) {
+  const stream = result.value;
+  // ReadableStream<{ id: string; type: "message" | "error" | "done"; content?: string }>
+
+  for await (const event of stream) {
+    if (event.type === "message") {
+      process.stdout.write(event.content ?? "");
+    } else if (event.type === "done") {
+      break;
+    }
+  }
+}
+```
+
+<Tip>When `outputSchema` is set, the emitted stream type is inferred from the schema — the same as non-streaming requests.</Tip>
+
+## Handling stream errors
+
+Errors can occur both when initiating the request and while consuming the stream. Check the result before iterating, and handle errors within the loop:
+
+```typescript
+const result = await okfetch("/events", { stream: true, outputSchema: eventSchema });
+
+if (result.isErr()) {
+  // Request failed before streaming started
+  console.error(result.error);
+} else {
+  try {
+    for await (const event of result.value) {
+      console.log(event);
+    }
+  } catch (err) {
+    // Stream was interrupted mid-flight
+    console.error("Stream error:", err);
+  }
+}
+```
+
+## Behavior summary
+
+| Configuration | Emitted type | Each chunk |
+| --- | --- | --- |
+| `stream: true` | `ReadableStream<string>` | Raw `data:` field from the SSE frame |
+| `stream: true` + `outputSchema` | `ReadableStream<z.infer<typeof outputSchema>>` | JSON-parsed and Zod-validated |
+
+<Warning>Streaming responses are not retried automatically, even if `retry` is configured. Retries only apply to non-streaming requests.</Warning>

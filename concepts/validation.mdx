@@ -1,0 +1,147 @@
+---
+title: "Validation"
+description: "Validate response bodies and error payloads with Zod schemas, and automatically validate request inputs with @okfetch/api."
+---
+
+okfetch integrates with [Zod](https://zod.dev) to validate both incoming response data and outgoing request data. Validation failures are surfaced as a `ValidationError` in the result — never as exceptions.
+
+## Response body validation
+
+Pass `outputSchema` to validate the parsed response body. If the body does not match the schema, the result is an `Err` with a `ValidationError` where `type === "output"`.
+
+```typescript
+import { z } from "zod";
+import { okfetch } from "@okfetch/fetch";
+
+const userSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string().email(),
+});
+
+const result = await okfetch("/users/1", {
+  outputSchema: userSchema,
+});
+
+if (result.isOk()) {
+  // result.value is inferred as { id: number; name: string; email: string }
+  console.log(result.value.email);
+}
+```
+
+<Tip>When `outputSchema` is provided, the return type of `okfetch` is automatically inferred from the schema — no need to pass a generic type argument.</Tip>
+
+## API error body validation
+
+Use `apiErrorDataSchema` to parse and validate the response body when the server returns a non-2xx status. The parsed data is attached to `ApiError.data`.
+
+```typescript
+const apiErrorSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+});
+
+const result = await okfetch("/users/1", {
+  outputSchema: userSchema,
+  apiErrorDataSchema: apiErrorSchema,
+});
+
+if (result.isErr() && result.error._tag === "ApiError") {
+  // result.error.data is inferred as { code: string; message: string }
+  console.error(result.error.data?.message);
+}
+```
+
+### Controlling which status codes are validated
+
+By default, `apiErrorDataSchema` is applied to all non-2xx responses. Use `shouldValidateError` to restrict validation to specific status codes.
+
+```typescript
+const result = await okfetch("/users/1", {
+  apiErrorDataSchema: apiErrorSchema,
+  // Only validate 4xx responses, skip 5xx
+  shouldValidateError: (statusCode) => statusCode >= 400 && statusCode < 500,
+});
+```
+
+### Built-in helpers
+
+okfetch exports two preset functions for common cases:
+
+```typescript
+import {
+  validateClientErrors,
+  validateAllErrors,
+} from "@okfetch/fetch";
+
+// Validate only 4xx responses
+const result = await okfetch("/users/1", {
+  apiErrorDataSchema: apiErrorSchema,
+  shouldValidateError: validateClientErrors,
+});
+
+// Validate both 4xx and 5xx responses
+const result2 = await okfetch("/users/1", {
+  apiErrorDataSchema: apiErrorSchema,
+  shouldValidateError: validateAllErrors,
+});
+```
+
+| Helper | Validates |
+| --- | --- |
+| `validateClientErrors` | 4xx status codes only |
+| `validateAllErrors` | 4xx and 5xx status codes |
+
+## ValidationError.type values
+
+When validation fails, `ValidationError.type` tells you exactly which part of the request or response was invalid:
+
+| Value | When it occurs |
+| --- | --- |
+| `"output"` | Response body did not match `outputSchema` |
+| `"error"` | Error response body did not match `errorSchema` |
+| `"body"` | Request body did not match the route's body schema (`@okfetch/api` only) |
+| `"params"` | URL path parameters did not match the route's params schema (`@okfetch/api` only) |
+| `"query"` | Query string values did not match the route's query schema (`@okfetch/api` only) |
+
+```typescript
+if (result.isErr() && result.error._tag === "ValidationError") {
+  const { type, zodError } = result.error;
+
+  console.error(`Validation failed on: ${type}`);
+  zodError.issues.forEach((issue) => {
+    console.error(`  ${issue.path.join(".")}: ${issue.message}`);
+  });
+}
+```
+
+## Request-side validation with @okfetch/api
+
+When you define typed API routes with `@okfetch/api`, okfetch validates `body`, `params`, and `query` against the route's declared schemas before the request is sent. This catches mistakes at the call site rather than waiting for a server error.
+
+```typescript
+import { createApi } from "@okfetch/api";
+import { z } from "zod";
+
+const api = createApi({
+  baseURL: "https://api.example.com",
+  routes: {
+    createUser: {
+      method: "POST",
+      path: "/users",
+      bodySchema: z.object({
+        name: z.string().min(1),
+        email: z.string().email(),
+      }),
+      outputSchema: userSchema,
+    },
+  },
+});
+
+// ValidationError with type === "body" if the body is invalid
+const result = await api.createUser({
+  body: { name: "", email: "not-an-email" },
+});
+```
+
+<Note>Request-side validation (`"body"`, `"params"`, `"query"`) only occurs when using `@okfetch/api` with defined route schemas. The base `okfetch` function only validates response data.</Note>

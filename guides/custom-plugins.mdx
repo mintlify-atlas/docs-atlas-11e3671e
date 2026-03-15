@@ -1,0 +1,165 @@
+---
+title: "Custom plugins"
+description: "Build your own OkfetchPlugin to intercept and modify requests, responses, and errors."
+---
+
+Plugins let you hook into the request lifecycle to add cross-cutting behavior such as logging, metrics, authentication, request rewriting, and more. Any plugin can be used with both `okfetch()` and `createApi()`.
+
+## Plugin structure
+
+A plugin is an object with a `name`, an optional `version`, and a `hooks` object containing one or more lifecycle handlers.
+
+```typescript
+import type { OkfetchPlugin } from "@okfetch/fetch";
+
+const myPlugin: OkfetchPlugin = {
+  name: "my-plugin",
+  version: "1.0.0",
+  hooks: {
+    onRequest(context) {
+      // inspect or modify the request context
+      return context;
+    },
+  },
+};
+```
+
+## Available hooks
+
+| Hook         | Arguments                                           | Can return           | Description                                                              |
+| ------------ | --------------------------------------------------- | -------------------- | ------------------------------------------------------------------------ |
+| `init`       | `(input)`                                           | Modified input       | Runs before the request context is built. Can modify URL and options.    |
+| `onRequest`  | `(context)`                                         | Modified context     | Runs before fetch is called. Can modify the request context.             |
+| `onResponse` | `(context, response)`                               | Modified response    | Runs after fetch returns. Can modify the raw response.                   |
+| `onSuccess`  | `(context, response, data)`                         | void                 | Runs after the response is successfully parsed. Fire-and-forget.         |
+| `onFail`     | `(context, response \| undefined, error)`           | void                 | Runs on any error (network, parse, API). Fire-and-forget.                |
+| `onRetry`    | `(context, response \| undefined, error, attempt)`  | void                 | Runs before each retry attempt. Fire-and-forget.                         |
+
+`init`, `onRequest`, and `onResponse` can modify and return their inputs. If they throw, a `PluginError` is returned as the result instead of the original error.
+
+`onSuccess`, `onFail`, and `onRetry` are fire-and-forget — their return values are ignored and throwing in them does not affect the result.
+
+## Example: timing plugin
+
+This plugin tracks how long each request takes and logs the duration on success or failure.
+
+```typescript
+import type { OkfetchPlugin } from "@okfetch/fetch";
+
+const timingPlugin: OkfetchPlugin = {
+  name: "timing",
+  version: "1.0.0",
+  hooks: {
+    onRequest(context) {
+      // Attach start time to context metadata
+      context.meta = { ...context.meta, startedAt: Date.now() };
+      return context;
+    },
+    onSuccess(context, _response, _data) {
+      const duration = Date.now() - (context.meta?.startedAt ?? Date.now());
+      console.log(`[timing] ${context.method} ${context.url} — ${duration}ms`);
+    },
+    onFail(context, _response, error) {
+      const duration = Date.now() - (context.meta?.startedAt ?? Date.now());
+      console.error(
+        `[timing] ${context.method} ${context.url} failed after ${duration}ms — ${error._tag}`
+      );
+    },
+  },
+};
+```
+
+Use it like any other plugin:
+
+```typescript
+import { okfetch } from "@okfetch/fetch";
+
+const result = await okfetch("https://api.example.com/data", {
+  method: "GET",
+  plugins: [timingPlugin],
+});
+```
+
+## Example: request rewriting plugin
+
+Use `onRequest` to conditionally modify headers based on the URL or other context. This is useful for injecting auth tokens, adding tracing headers, or routing requests.
+
+```typescript
+import type { OkfetchPlugin } from "@okfetch/fetch";
+
+const authPlugin: OkfetchPlugin = {
+  name: "conditional-auth",
+  version: "1.0.0",
+  hooks: {
+    onRequest(context) {
+      // Only add auth header for requests to our own API
+      if (context.url.hostname === "api.example.com") {
+        return {
+          ...context,
+          headers: {
+            ...context.headers,
+            Authorization: `Bearer ${getAccessToken()}`,
+          },
+        };
+      }
+      // Return undefined (or the unmodified context) for all other requests
+      return context;
+    },
+  },
+};
+
+function getAccessToken(): string {
+  // Your token retrieval logic
+  return "my-access-token";
+}
+```
+
+## Example: using the `init` hook
+
+The `init` hook runs before the request context is built, giving you access to the raw URL string and options. Use it to prepend a base URL, swap the fetch implementation, or add default headers before the rest of the pipeline runs.
+
+```typescript
+import type { OkfetchPlugin } from "@okfetch/fetch";
+
+const stagingRedirectPlugin: OkfetchPlugin = {
+  name: "staging-redirect",
+  version: "1.0.0",
+  hooks: {
+    init(input) {
+      // Rewrite production URLs to staging in non-production environments
+      if (process.env.NODE_ENV !== "production") {
+        return {
+          ...input,
+          url: input.url.replace(
+            "https://api.example.com",
+            "https://staging.example.com"
+          ),
+        };
+      }
+      return input;
+    },
+  },
+};
+```
+
+<Note>
+  If `init`, `onRequest`, or `onResponse` throws an error, okfetch wraps it in a `PluginError` and returns it as the result. The request is not retried in this case.
+</Note>
+
+## Using multiple plugins
+
+Plugins are applied in array order. Each hook runs sequentially, with the output of one passed to the next.
+
+```typescript
+import { okfetch } from "@okfetch/fetch";
+import { logger } from "@okfetch/logger";
+
+const result = await okfetch("https://api.example.com/data", {
+  method: "GET",
+  plugins: [authPlugin, timingPlugin, logger()],
+});
+```
+
+<Tip>
+  For plugins shared across many calls, pass them to `createApi` once rather than repeating them on every individual request.
+</Tip>

@@ -1,0 +1,135 @@
+---
+title: "Auth"
+description: "Attach authentication credentials to requests using the built-in auth option."
+---
+
+Pass an `auth` object to automatically set the `Authorization` header on a request. Three shapes are supported: `bearer`, `basic`, and `custom`.
+
+## Bearer token
+
+Sets `Authorization: Bearer <token>`.
+
+```typescript
+const result = await okfetch("/users", {
+  auth: {
+    type: "bearer",
+    token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  },
+});
+```
+
+## Basic auth
+
+Base64-encodes `username:password` and sets `Authorization: Basic <encoded>`.
+
+```typescript
+const result = await okfetch("/admin/users", {
+  auth: {
+    type: "basic",
+    username: "alice",
+    password: "s3cr3t",
+  },
+});
+```
+
+## Custom auth
+
+Sets `Authorization: <prefix> <value>`. Use this for non-standard schemes like API keys or HMAC signatures.
+
+```typescript
+const result = await okfetch("/data", {
+  auth: {
+    type: "custom",
+    prefix: "ApiKey",
+    value: "abc123",
+  },
+});
+// Sets: Authorization: ApiKey abc123
+```
+
+## Auth type reference
+
+<AccordionGroup>
+  <Accordion title="BearerAuth">
+    ```typescript
+    type BearerAuth = {
+      type: "bearer";
+      token: string;
+    };
+    ```
+
+    | Field | Type | Description |
+    | --- | --- | --- |
+    | `type` | `"bearer"` | Auth scheme discriminant |
+    | `token` | `string` | The bearer token value |
+  </Accordion>
+
+  <Accordion title="BasicAuth">
+    ```typescript
+    type BasicAuth = {
+      type: "basic";
+      username: string;
+      password: string;
+    };
+    ```
+
+    | Field | Type | Description |
+    | --- | --- | --- |
+    | `type` | `"basic"` | Auth scheme discriminant |
+    | `username` | `string` | Username to encode |
+    | `password` | `string` | Password to encode |
+  </Accordion>
+
+  <Accordion title="CustomAuth">
+    ```typescript
+    type CustomAuth = {
+      type: "custom";
+      prefix: string;
+      value: string;
+    };
+    ```
+
+    | Field | Type | Description |
+    | --- | --- | --- |
+    | `type` | `"custom"` | Auth scheme discriminant |
+    | `prefix` | `string` | The scheme name (e.g. `"ApiKey"`, `"Token"`) |
+    | `value` | `string` | The credential value |
+  </Accordion>
+</AccordionGroup>
+
+## Global auth with createApi
+
+Set `auth` globally on `createApi` to apply it to every request without repeating it at each call site:
+
+```typescript
+import { createApi } from "@okfetch/api";
+
+const api = createApi({
+  baseURL: "https://api.example.com",
+  auth: {
+    type: "bearer",
+    token: process.env.API_TOKEN,
+  },
+});
+
+// All requests from `api` include the Authorization header
+const result = await api.getUsers();
+```
+
+## Per-request override
+
+When you pass `auth` on an individual request, it overrides the global auth set on `createApi`:
+
+```typescript
+const api = createApi({
+  baseURL: "https://api.example.com",
+  auth: { type: "bearer", token: defaultToken },
+});
+
+// This request uses a different token
+const result = await api.getUser({
+  auth: { type: "bearer", token: userScopedToken },
+});
+```
+
+<Note>The `auth` option only sets the `Authorization` header. If you need to add other authentication-related headers (e.g. `X-Api-Key`), use the `headers` option or an `onRequest` plugin hook instead.</Note>

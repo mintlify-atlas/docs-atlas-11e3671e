@@ -1,0 +1,143 @@
+---
+title: "createEndpoints()"
+description: "Define a typed endpoint tree with Zod schema validation for use with createApi()."
+---
+
+`createEndpoints` is a helper exported by `@okfetch/api` that accepts an `EndpointTree` and returns it unchanged. Its sole purpose is to give TypeScript enough information to infer the full tree type when passed to [`createApi()`](/reference/api/create-api).
+
+## Signature
+
+```typescript
+const createEndpoints = <TTree extends EndpointTree>(endpoints: TTree): TTree;
+```
+
+This is a pure identity function — it performs no runtime transformation.
+
+## Parameters
+
+<ParamField path="endpoints" type="EndpointTree" required>
+  A plain object mapping string keys to `EndpointDefinition` objects or nested `EndpointTree` objects. Keys become the method names on the generated `ApiClient`.
+</ParamField>
+
+## EndpointDefinition fields
+
+Each leaf of the endpoint tree must be an `EndpointDefinition`:
+
+<ParamField path="method" type="GET | POST | PUT | DELETE | PATCH | ..." required>
+  HTTP method for this endpoint.
+</ParamField>
+
+<ParamField path="path" type="`/${string}`" required>
+  URL path appended to the `baseURL` set in `createApi`. Must begin with `/`.
+
+  Supports path parameters using `:param` syntax:
+  ```typescript
+  path: "/users/:id/posts/:postId"
+  ```
+</ParamField>
+
+<ParamField path="output" type="ZodType">
+  Zod schema that validates the response body on success. The inferred type becomes the `value` of the returned `Result`.
+</ParamField>
+
+<ParamField path="body" type="ZodType">
+  Zod schema that validates the request body before sending. When present, the endpoint function's first argument includes a `body` field typed from this schema.
+</ParamField>
+
+<ParamField path="params" type="ZodType">
+  Zod schema that validates URL path parameters. When present, the endpoint function's first argument includes a `params` field typed from this schema.
+</ParamField>
+
+<ParamField path="query" type="ZodType">
+  Zod schema that validates query string parameters. When present, the endpoint function's first argument includes a `query` field typed from this schema.
+</ParamField>
+
+<ParamField path="error" type="ZodType">
+  Per-endpoint error schema. Overrides the global `errorSchema` set in `createApi` for this endpoint only.
+</ParamField>
+
+<ParamField path="stream" type="true">
+  When set to `true`, this endpoint returns a `ReadableStream` instead of a parsed body.
+</ParamField>
+
+<ParamField path="requestOptions" type="EndpointRequestOverrides">
+  Per-endpoint fetch defaults (headers, auth, timeout, retry, plugins, etc.). Merged on top of the global defaults from `createApi`, but overridden by per-call overrides.
+</ParamField>
+
+## EndpointTree nesting
+
+Endpoint trees can be nested to any depth. Nested objects that do not have a `method` field are treated as sub-trees, not endpoint definitions.
+
+```typescript
+{
+  users: {
+    list:   { method: "GET",    path: "/users" },
+    get:    { method: "GET",    path: "/users/:id" },
+    posts: {
+      list: { method: "GET",   path: "/users/:userId/posts" },
+    },
+  },
+}
+```
+
+This produces an `ApiClient` with methods at `api.users.list()`, `api.users.get()`, and `api.users.posts.list()`.
+
+## Example
+
+```typescript
+import { createEndpoints } from "@okfetch/api";
+import { z } from "zod";
+
+const UserSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string().email(),
+});
+
+const CreateUserSchema = z.object({
+  name: z.string().min(1),
+  email: z.string().email(),
+});
+
+const endpoints = createEndpoints({
+  users: {
+    list: {
+      method: "GET",
+      path: "/users",
+      query: z.object({ page: z.number().optional(), limit: z.number().optional() }),
+      output: z.array(UserSchema),
+    },
+    get: {
+      method: "GET",
+      path: "/users/:id",
+      params: z.object({ id: z.string() }),
+      output: UserSchema,
+    },
+    create: {
+      method: "POST",
+      path: "/users",
+      body: CreateUserSchema,
+      output: UserSchema,
+    },
+    delete: {
+      method: "DELETE",
+      path: "/users/:id",
+      params: z.object({ id: z.string() }),
+    },
+  },
+});
+
+export default endpoints;
+```
+
+Pass this directly to `createApi`:
+
+```typescript
+import { createApi } from "@okfetch/api";
+import endpoints from "./endpoints";
+
+const api = createApi({
+  baseURL: "https://api.example.com",
+  endpoints,
+});
+```

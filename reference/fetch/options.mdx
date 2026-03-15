@@ -1,0 +1,164 @@
+---
+title: "OkfetchOptions"
+description: "All configuration options accepted by okfetch()."
+---
+
+`OkfetchOptions` is passed as the second argument to [`okfetch()`](/reference/fetch/okfetch). Every field is optional.
+
+## URL building
+
+<ParamField path="baseURL" type="string">
+  Base URL prepended to the `url` argument. Useful when all requests share a common host.
+
+  ```typescript
+  okfetch("/users", { baseURL: "https://api.example.com" })
+  // → https://api.example.com/users
+  ```
+</ParamField>
+
+<ParamField path="params" type="Record<string, string | number | boolean>">
+  Path parameter substitution map. Keys replace `:key` segments in the URL.
+
+  ```typescript
+  okfetch("/users/:id/posts/:postId", {
+    params: { id: "42", postId: 7 },
+  })
+  // → /users/42/posts/7
+  ```
+</ParamField>
+
+<ParamField path="query" type="Record<string, string | number | boolean | (string | number | boolean)[]>">
+  Query string parameters. Arrays produce repeated keys.
+
+  ```typescript
+  okfetch("/posts", { query: { page: 1, tags: ["news", "tech"] } })
+  // → /posts?page=1&tags=news&tags=tech
+  ```
+</ParamField>
+
+## Request
+
+<ParamField path="method" type="GET | POST | PUT | DELETE | PATCH | HEAD | OPTIONS">
+  HTTP method. Defaults to `"GET"` when not specified.
+</ParamField>
+
+<ParamField path="headers" type="Record<string, string>">
+  HTTP request headers merged with any headers set by plugins or auth.
+</ParamField>
+
+<ParamField path="body" type="unknown">
+  Request body. Serialized to JSON automatically. Sets `Content-Type: application/json` when present.
+</ParamField>
+
+<ParamField path="auth" type="Auth">
+  Convenience shorthand for setting the `Authorization` header.
+
+  <Expandable title="Auth variants">
+    ```typescript
+    // HTTP Basic auth (Base64-encoded username:password)
+    { type: "basic"; username: string; password: string }
+
+    // Bearer token
+    { type: "bearer"; token: string }
+
+    // Custom prefix
+    { type: "custom"; prefix: string; value: string }
+    ```
+  </Expandable>
+</ParamField>
+
+<ParamField path="timeout" type="number">
+  Milliseconds before the request is aborted and a [`TimeoutError`](/reference/fetch/errors#timeouterror) is returned.
+</ParamField>
+
+<ParamField path="fetch" type="OkfetchFetch">
+  Custom `fetch` implementation. Defaults to the global `fetch`. Useful for testing or environments with a non-standard fetch.
+</ParamField>
+
+<ParamField path="stream" type="boolean">
+  When `true`, the resolved value is a `ReadableStream` instead of a parsed response body. Skips JSON parsing and schema validation of the response body.
+</ParamField>
+
+## Validation
+
+<ParamField path="outputSchema" type="ZodType">
+  Zod schema used to validate the parsed response body on success. When validation fails a [`ValidationError`](/reference/fetch/errors#validationerror) with `type: "output"` is returned.
+</ParamField>
+
+<ParamField path="validateOutput" type="boolean" default="true">
+  Set to `false` to skip `outputSchema` validation even when a schema is provided.
+</ParamField>
+
+<ParamField path="apiErrorDataSchema" type="ZodType">
+  Zod schema used to validate the response body when the response is considered an error. Typed on the [`ApiError`](/reference/fetch/errors#apierror) as `ApiError<T>.data`.
+</ParamField>
+
+<ParamField path="errorSchema" type="ZodType">
+  Alias for `apiErrorDataSchema`. Used internally by `@okfetch/api`.
+</ParamField>
+
+<ParamField path="shouldValidateError" type="(statusCode: number) => boolean">
+  Controls when `apiErrorDataSchema` validation runs. Called with the HTTP status code; return `true` to validate. See [`validateClientErrors`](/reference/fetch/errors#presets) and [`validateAllErrors`](/reference/fetch/errors#presets) for built-in presets.
+
+  ```typescript
+  // Validate error body only for 4xx responses
+  shouldValidateError: (code) => code >= 400 && code < 500
+  ```
+</ParamField>
+
+## Retry
+
+<ParamField path="retry" type="RetryOptions">
+  Automatic retry configuration. Supports three backoff strategies.
+
+  <Expandable title="Fixed strategy">
+    ```typescript
+    {
+      strategy: "fixed";
+      attempts: number;       // total retry attempts
+      delay?: number;         // ms between attempts, default 0
+      shouldRetry?: (error: RetryableOkfetchError) => boolean;
+    }
+    ```
+  </Expandable>
+
+  <Expandable title="Linear strategy">
+    ```typescript
+    {
+      strategy: "linear";
+      attempts: number;
+      initialDelay?: number;  // default 100
+      step?: number;          // ms added per attempt, default 100
+      maxDelay?: number;      // no cap if omitted
+      shouldRetry?: (error: RetryableOkfetchError) => boolean;
+    }
+    ```
+  </Expandable>
+
+  <Expandable title="Exponential strategy">
+    ```typescript
+    {
+      strategy: "exponential";
+      attempts: number;
+      initialDelay?: number;  // default 100
+      factor?: number;        // multiplier per attempt, default 2
+      maxDelay?: number;      // no cap if omitted
+      shouldRetry?: (error: RetryableOkfetchError) => boolean;
+    }
+    ```
+  </Expandable>
+</ParamField>
+
+## Plugins
+
+<ParamField path="plugins" type="OkfetchPlugin[]">
+  Array of plugins that hook into the request lifecycle. Plugins run in order. See [OkfetchPlugin](/reference/fetch/types#okfetchplugin) for the plugin interface.
+
+  ```typescript
+  import { logger } from "@okfetch/logger";
+
+  okfetch("/api/users", {
+    plugins: [logger()],
+  });
+  ```
+</ParamField>

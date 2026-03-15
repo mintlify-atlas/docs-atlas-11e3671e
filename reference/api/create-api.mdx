@@ -1,0 +1,174 @@
+---
+title: "createApi()"
+description: "Build a fully-typed API client from an endpoint tree."
+---
+
+`createApi` accepts a `CreateApiOptions` object and returns an `ApiClient` — a typed object where each key is a callable function matching the endpoint definition.
+
+## Signature
+
+```typescript
+const createApi = <TTree extends EndpointTree, TGlobalError = unknown>(
+  options: CreateApiOptions<TTree, TGlobalError>
+): ApiClient<TTree, TGlobalError>;
+```
+
+## Parameters
+
+<ParamField path="baseURL" type="string" required>
+  The base URL prepended to every endpoint `path`. Must not have a trailing slash.
+
+  ```typescript
+  baseURL: "https://api.example.com"
+  ```
+</ParamField>
+
+<ParamField path="endpoints" type="EndpointTree" required>
+  The endpoint tree — typically the return value of [`createEndpoints()`](/reference/api/create-endpoints).
+</ParamField>
+
+<ParamField path="errorSchema" type="ZodType<TGlobalError>">
+  Global Zod schema applied to error response bodies for every endpoint. Can be overridden per-endpoint using the `error` field on an `EndpointDefinition`.
+</ParamField>
+
+<ParamField path="shouldValidateError" type="(statusCode: number) => boolean">
+  Controls when `errorSchema` validation runs. Receives the HTTP status code; return `true` to validate. Defaults to validating all non-2xx responses.
+
+  ```typescript
+  import { validateClientErrors } from "@okfetch/fetch";
+
+  shouldValidateError: validateClientErrors // only 4xx
+  ```
+</ParamField>
+
+<ParamField path="validateInput" type="boolean" default="true">
+  When `true`, request `body`, `params`, and `query` are validated against their endpoint schemas before the request is sent. Set to `false` to skip input validation globally.
+</ParamField>
+
+<ParamField path="validateOutput" type="boolean">
+  When `true`, response bodies are validated against `output` schemas. Passed to every endpoint as a default; can be overridden per-call.
+</ParamField>
+
+<ParamField path="headers" type="Record<string, string>">
+  Default headers merged into every request. Overridden by endpoint `requestOptions.headers`, then by per-call overrides.
+</ParamField>
+
+<ParamField path="auth" type="Auth">
+  Default `Authorization` header for every request. See [`Auth`](/reference/fetch/types#auth).
+</ParamField>
+
+<ParamField path="timeout" type="number">
+  Default timeout in milliseconds for every request.
+</ParamField>
+
+<ParamField path="retry" type="RetryOptions">
+  Default retry configuration for every request. See [`RetryOptions`](/reference/fetch/types#retryoptions).
+</ParamField>
+
+<ParamField path="plugins" type="OkfetchPlugin[]">
+  Default plugins applied to every request.
+</ParamField>
+
+## Return value
+
+Returns `ApiClient<TTree, TGlobalError>` — a mirrored object of the endpoint tree where each leaf is replaced with a callable `EndpointFunction`.
+
+```typescript
+type ApiClient<TTree extends EndpointTree, TGlobalError = unknown> = {
+  [TKey in keyof TTree]: TTree[TKey] extends EndpointDefinition
+    ? EndpointFunction<TTree[TKey], TGlobalError>
+    : TTree[TKey] extends EndpointTree
+      ? ApiClient<TTree[TKey], TGlobalError>
+      : never;
+};
+```
+
+### Calling endpoint functions
+
+Endpoint functions have one of two signatures depending on whether the endpoint definition includes `body`, `params`, or `query` schemas:
+
+```typescript
+// Endpoint with at least one schema field:
+api.users.create(
+  { body: { name: "Alice", email: "alice@example.com" } }, // EndpointCallOptions
+  { headers: { "X-Request-Id": "abc" } }                   // optional per-call overrides
+);
+
+// Endpoint with no schema fields:
+api.health.ping(
+  { headers: { "X-Trace": "123" } } // only per-call overrides
+);
+```
+
+All endpoint functions return `Promise<Result<TSuccess, ApiErrors<TGlobalError>>>`.
+
+## Override precedence
+
+Options merge from lowest to highest priority:
+
+```
+global (createApi) < endpoint (requestOptions) < per-call overrides
+```
+
+For example, a per-call `auth` override replaces the global `auth`; it does not merge.
+
+## Complete example
+
+```typescript
+import { createApi } from "@okfetch/api";
+import { validateClientErrors } from "@okfetch/fetch";
+import { logger } from "@okfetch/logger";
+import { z } from "zod";
+
+const endpoints = {
+  users: {
+    list: {
+      method: "GET" as const,
+      path: "/users",
+      query: z.object({ page: z.number().optional() }),
+      output: z.array(z.object({ id: z.string(), name: z.string() })),
+    },
+    create: {
+      method: "POST" as const,
+      path: "/users",
+      body: z.object({ name: z.string(), email: z.string().email() }),
+      output: z.object({ id: z.string(), name: z.string() }),
+    },
+    get: {
+      method: "GET" as const,
+      path: "/users/:id",
+      params: z.object({ id: z.string() }),
+      output: z.object({ id: z.string(), name: z.string() }),
+    },
+  },
+};
+
+const api = createApi({
+  baseURL: "https://api.example.com",
+  endpoints,
+  errorSchema: z.object({ message: z.string() }),
+  shouldValidateError: validateClientErrors,
+  auth: { type: "bearer", token: process.env.API_TOKEN! },
+  plugins: [logger()],
+});
+
+// List users with query params
+const list = await api.users.list({ query: { page: 1 } });
+
+// Create a user
+const created = await api.users.create(
+  { body: { name: "Alice", email: "alice@example.com" } }
+);
+
+// Get a user with path params, overriding auth per-call
+const user = await api.users.get(
+  { params: { id: "42" } },
+  { auth: { type: "bearer", token: "other-token" } }
+);
+
+if (user.ok) {
+  console.log(user.value.name);
+} else if (user.error._tag === "ApiError") {
+  console.error(user.error.data?.message);
+}
+```

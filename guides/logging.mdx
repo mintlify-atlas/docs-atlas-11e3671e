@@ -1,0 +1,138 @@
+---
+title: "Request logging"
+description: "Add structured request and response logging to okfetch using the @okfetch/logger plugin."
+---
+
+The `@okfetch/logger` package provides a plugin that logs request lifecycle events using [pino](https://github.com/pinojs/pino). It integrates with both the `okfetch()` function and `createApi()`.
+
+## Installation
+
+<CodeGroup>
+
+```bash npm
+npm install @okfetch/logger
+```
+
+```bash yarn
+yarn add @okfetch/logger
+```
+
+```bash bun
+bun add @okfetch/logger
+```
+
+</CodeGroup>
+
+## Basic usage
+
+Pass the `logger()` plugin in the `plugins` array.
+
+```typescript
+import { okfetch } from "@okfetch/fetch";
+import { logger } from "@okfetch/logger";
+
+const result = await okfetch("https://example.com/health", {
+  method: "GET",
+  plugins: [logger()],
+});
+```
+
+## Log output
+
+The plugin hooks into four lifecycle events and produces structured pino log entries.
+
+| Hook        | Log example                                                        |
+| ----------- | ------------------------------------------------------------------ |
+| `onRequest` | `Sending request to [GET] https://example.com/health`              |
+| `onSuccess` | `Request succeeded with status 200`                                |
+| `onFail`    | `Request failed [ApiError] 404 Not Found`                          |
+| `onRetry`   | `Request failed [FetchError], retrying attempt 2...`               |
+
+Success and failure events map to pino `info` and `error` levels respectively.
+
+## Logging the response body
+
+Set `logDataOnSuccess: true` to include the parsed response body in the success log.
+
+```typescript
+import { okfetch } from "@okfetch/fetch";
+import { logger } from "@okfetch/logger";
+
+const result = await okfetch("https://example.com/health", {
+  method: "GET",
+  plugins: [
+    logger({
+      logDataOnSuccess: true,
+    }),
+  ],
+});
+```
+
+<Note>
+  `logDataOnSuccess` only adds the response body when the request succeeds. Failed requests never log response body data.
+</Note>
+
+## Customizing the pino logger
+
+Pass `pinoOptions` to control log level, transport, formatting, and any other pino configuration.
+
+```typescript
+import { logger } from "@okfetch/logger";
+
+const requestLogger = logger({
+  pinoOptions: {
+    level: "debug",
+    transport: {
+      target: "pino-pretty",
+      options: { colorize: true },
+    },
+  },
+  logDataOnSuccess: true,
+});
+```
+
+## Using with createApi
+
+To enable logging for every endpoint in an API client, add the plugin to the `plugins` array in `createApi`.
+
+```typescript
+import { createApi, createEndpoints } from "@okfetch/api";
+import { logger } from "@okfetch/logger";
+import { z } from "zod/v4";
+
+const endpoints = createEndpoints({
+  users: {
+    get: {
+      method: "GET",
+      path: "/users/:id",
+      output: z.object({ id: z.number(), name: z.string() }),
+      params: z.object({ id: z.number() }),
+    },
+  },
+});
+
+const api = createApi({
+  baseURL: "https://api.example.com",
+  endpoints,
+  plugins: [
+    logger({
+      logDataOnSuccess: true,
+    }),
+  ],
+});
+
+const result = await api.users.get({ params: { id: 1 } });
+// Logs: Sending request to [GET] https://api.example.com/users/1
+// Logs: Request succeeded with status 200
+```
+
+<Tip>
+  Adding the logger globally via `createApi` means you don't need to repeat it on each call. You can still override `plugins` on individual calls if needed.
+</Tip>
+
+## Logger options reference
+
+| Option             | Type                    | Description                                           |
+| ------------------ | ----------------------- | ----------------------------------------------------- |
+| `pinoOptions`      | `pino.LoggerOptions`    | Options passed directly to the pino logger instance.  |
+| `logDataOnSuccess` | `boolean`               | Include parsed response body in success log entries.  |

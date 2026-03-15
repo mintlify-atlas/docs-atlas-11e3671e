@@ -1,0 +1,219 @@
+---
+title: "Types"
+description: "TypeScript types exported from @okfetch/fetch."
+---
+
+All types below are exported from `@okfetch/fetch`.
+
+## Method
+
+The set of supported HTTP methods.
+
+```typescript
+type Method = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
+```
+
+---
+
+## Auth
+
+Convenience type for the `auth` option. Sets the `Authorization` header.
+
+```typescript
+type Auth =
+  | { type: "basic";  username: string; password: string } // Base64 Basic auth
+  | { type: "bearer"; token: string }                      // Bearer token
+  | { type: "custom"; prefix: string; value: string };     // Custom prefix
+```
+
+**Examples:**
+
+```typescript
+// Bearer
+{ type: "bearer", token: "eyJhbGci..." }
+// → Authorization: Bearer eyJhbGci...
+
+// Basic
+{ type: "basic", username: "alice", password: "secret" }
+// → Authorization: Basic YWxpY2U6c2VjcmV0
+
+// Custom
+{ type: "custom", prefix: "ApiKey", value: "my-api-key" }
+// → Authorization: ApiKey my-api-key
+```
+
+---
+
+## RetryOptions
+
+Configuration for automatic retries. Three strategies are available.
+
+```typescript
+type FixedRetryOptions = {
+  strategy: "fixed";
+  attempts: number;
+  delay?: number;       // default: 0
+  shouldRetry?: (error: RetryableOkfetchError) => boolean;
+};
+
+type LinearRetryOptions = {
+  strategy: "linear";
+  attempts: number;
+  initialDelay?: number; // default: 100
+  step?: number;         // default: 100, added per attempt
+  maxDelay?: number;     // no cap if omitted
+  shouldRetry?: (error: RetryableOkfetchError) => boolean;
+};
+
+type ExponentialRetryOptions = {
+  strategy: "exponential";
+  attempts: number;
+  initialDelay?: number; // default: 100
+  factor?: number;       // default: 2, multiplied per attempt
+  maxDelay?: number;     // no cap if omitted
+  shouldRetry?: (error: RetryableOkfetchError) => boolean;
+};
+
+type RetryOptions = FixedRetryOptions | LinearRetryOptions | ExponentialRetryOptions;
+```
+
+The `shouldRetry` callback receives the error that triggered the retry. Return `false` to stop retrying early.
+
+---
+
+## OkfetchError
+
+The error union type returned by `okfetch` when `result.ok === false`.
+
+```typescript
+type OkfetchError<TErr> =
+  | FetchError
+  | ApiError<TErr>
+  | ParseError
+  | PluginError
+  | ValidationError
+  | TimeoutError;
+```
+
+See [Error classes](/reference/fetch/errors) for the full property reference of each variant.
+
+---
+
+## OkfetchSuccess
+
+The success value type. Resolves to `ReadableStream<TRes>` when `stream: true`, otherwise `TRes`.
+
+```typescript
+type OkfetchSuccess<Options extends OkfetchOptions, TRes = StreamChunkValue<Options>> =
+  Options["stream"] extends true ? ReadableStream<TRes> : TRes;
+```
+
+---
+
+## OkfetchFetch
+
+The type of a custom `fetch` implementation passed via `options.fetch`.
+
+```typescript
+type OkfetchFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+```
+
+Must match the standard `fetch` signature. Useful for providing a mocked fetch in tests.
+
+```typescript
+import { okfetch } from "@okfetch/fetch";
+
+const result = await okfetch("/api/users", {
+  fetch: myCustomFetch, // e.g. node-fetch, undici, or a mock
+});
+```
+
+---
+
+## OkfetchPlugin
+
+The interface for writing a plugin.
+
+```typescript
+type OkfetchPlugin<TData = unknown, TErr = unknown> = {
+  name: string;
+  version: string;
+  init?: (input: OkfetchPluginInitInput) =>
+    OkfetchPluginInitInput | undefined | Promise<OkfetchPluginInitInput | undefined>;
+  hooks?: OkfetchPluginHooks<TData, TErr>;
+};
+
+type OkfetchPluginInitInput = {
+  url: string;
+  options: OkfetchOptions;
+};
+```
+
+- `name` and `version` are required and used in error reporting.
+- `init` runs before the request is built; return a modified `OkfetchPluginInitInput` to change the URL or options, or return `undefined` to leave them unchanged.
+- `hooks` contain lifecycle callbacks — see `OkfetchPluginHooks` below.
+
+---
+
+## OkfetchPluginHooks
+
+Lifecycle hooks available to plugins.
+
+```typescript
+type OkfetchPluginHooks<TData = unknown, TErr = unknown> = {
+  onRequest?: (
+    context: OkfetchRequestContext
+  ) => OkfetchRequestContext | undefined | Promise<OkfetchRequestContext | undefined>;
+
+  onResponse?: (
+    context: OkfetchRequestContext,
+    response: Response
+  ) => Response | undefined | Promise<Response | undefined>;
+
+  onSuccess?: (
+    context: OkfetchRequestContext,
+    response: Response,
+    data: TData
+  ) => void | Promise<void>;
+
+  onFail?: (
+    context: OkfetchRequestContext,
+    response: Response | undefined,
+    error: OkfetchError<TErr>
+  ) => void | Promise<void>;
+
+  onRetry?: (
+    context: OkfetchRequestContext,
+    response: Response | undefined,
+    error: RetryableOkfetchError,
+    attempt: number
+  ) => void | Promise<void>;
+};
+```
+
+| Hook | When it runs | Can mutate |
+|---|---|---|
+| `onRequest` | After the `Request` object is built, before sending | Yes — return modified context |
+| `onResponse` | After the raw `Response` is received, before parsing | Yes — return modified response |
+| `onSuccess` | After successful parse and schema validation | No — return value ignored |
+| `onFail` | When any error is returned | No — return value ignored |
+| `onRetry` | Before each retry attempt | No — return value ignored |
+
+---
+
+## OkfetchRequestContext
+
+The request context object passed to plugin hooks.
+
+```typescript
+type OkfetchRequestContext = {
+  url: URL;
+  method: Method | Uppercase<string>;
+  headers: Headers;
+  body?: OkfetchBody;
+  signal: AbortSignal;
+  // ...other RequestInit fields (minus body, headers, method, signal)
+};
+```
+
+Mutating the returned context in `onRequest` allows plugins to add headers, change the URL, or modify the body before the request is sent.

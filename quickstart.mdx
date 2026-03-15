@@ -1,80 +1,151 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Make your first type-safe HTTP request with okfetch in under five minutes."
 ---
 
-## Get started in three steps
+This guide walks you through installing `@okfetch/fetch`, making a validated request, and handling the `Result`.
 
-Get your documentation site running locally and make your first customization.
+<Steps>
+  <Step title="Install the package">
+    Install `@okfetch/fetch` along with its two peer dependencies: `better-result` for the `Result` type, and `zod` for runtime validation.
 
-### Step 1: Set up your local environment
+    <CodeGroup>
+      ```bash npm
+      npm install @okfetch/fetch better-result zod
+      ```
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+      ```bash yarn
+      yarn add @okfetch/fetch better-result zod
+      ```
 
-### Step 2: Deploy your changes
+      ```bash pnpm
+      pnpm add @okfetch/fetch better-result zod
+      ```
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+      ```bash bun
+      bun add @okfetch/fetch better-result zod
+      ```
+    </CodeGroup>
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Make your first request">
+    Import `okfetch` and define a Zod schema for the expected response shape. Pass the schema as `outputSchema` — okfetch will validate the response before it reaches your code.
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```typescript
+    import { okfetch } from "@okfetch/fetch";
+    import { z } from "zod/v4";
 
-### Step 3: Go live
+    const todoSchema = z.object({
+      completed: z.boolean(),
+      id: z.number(),
+      title: z.string(),
+      userId: z.number(),
+    });
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    const result = await okfetch("https://jsonplaceholder.typicode.com/todos/1", {
+      outputSchema: todoSchema,
+    });
+    ```
+
+    `okfetch` always returns a `Result<T, E>` — it never throws for HTTP failures, timeouts, or validation errors.
+  </Step>
+
+  <Step title="Handle the Result">
+    Use `.match()` to handle success and failure in a single expression:
+
+    ```typescript
+    result.match({
+      ok: (todo) => console.log(todo.title),       // todo is fully typed
+      err: (error) => console.error(error._tag, error.message),
+    });
+    ```
+
+    Or use the guard methods if you prefer early-return style:
+
+    ```typescript
+    if (result.isErr()) {
+      console.error(result.error._tag, result.error.message);
+      return;
+    }
+
+    const todo = result.value; // typed as { completed: boolean; id: number; title: string; userId: number }
+    console.log(todo.title);
+    ```
+
+    <Tip>
+      Every error has a `_tag` string you can switch on to narrow the type: `"FetchError"`, `"TimeoutError"`, `"ApiError"`, `"ParseError"`, `"ValidationError"`, `"PluginError"`. See [Error classes](/reference/fetch/errors) for details.
+    </Tip>
+  </Step>
+
+  <Step title="Add a typed API client (optional)">
+    For applications with many repeated API calls, use `@okfetch/api` to define your endpoints once and generate a fully typed client.
+
+    <CodeGroup>
+      ```bash npm
+      npm install @okfetch/api @okfetch/fetch better-result zod
+      ```
+
+      ```bash bun
+      bun add @okfetch/api @okfetch/fetch better-result zod
+      ```
+    </CodeGroup>
+
+    ```typescript
+    import { createApi, createEndpoints } from "@okfetch/api";
+    import { z } from "zod/v4";
+
+    const todoSchema = z.object({
+      completed: z.boolean(),
+      id: z.number(),
+      title: z.string(),
+      userId: z.number(),
+    });
+
+    const endpoints = createEndpoints({
+      todos: {
+        get: {
+          method: "GET",
+          output: todoSchema,
+          params: z.object({ id: z.number() }),
+          path: "/todos/:id",
+        },
+        create: {
+          body: z.object({ title: z.string().min(1), userId: z.number() }),
+          method: "POST",
+          output: todoSchema,
+          path: "/todos",
+        },
+      },
+    });
+
+    const api = createApi({
+      baseURL: "https://jsonplaceholder.typicode.com",
+      endpoints,
+    });
+
+    // Fully typed — params, body, and response are all inferred from schemas
+    const result = await api.todos.get({ params: { id: 1 } });
+    ```
+
+    <Note>
+      The API client returns the same `Result<T, E>` as `okfetch()` — the same error handling patterns apply.
+    </Note>
+  </Step>
+</Steps>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Core Concepts" icon="book" href="/concepts/result-errors">
+    Understand the Result pattern, validation, plugins, retries, auth, and streaming.
+  </Card>
+  <Card title="Typed API client" icon="layer-group" href="/guides/typed-api-client">
+    Build a full typed API client with schema-defined endpoint trees.
+  </Card>
+  <Card title="Custom plugins" icon="plug" href="/guides/custom-plugins">
+    Add logging, tracing, metrics, or request rewriting via the plugin lifecycle.
+  </Card>
+  <Card title="API Reference" icon="code" href="/reference/fetch/okfetch">
+    Full reference for every option, type, and export.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

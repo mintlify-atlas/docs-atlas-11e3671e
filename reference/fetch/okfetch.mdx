@@ -1,0 +1,161 @@
+---
+title: "okfetch()"
+description: "The core fetch function — makes HTTP requests and returns a typed Result."
+---
+
+`okfetch` is the main function exported by `@okfetch/fetch`. It wraps the browser/Node `fetch` API and returns a `Result<TSuccess, OkfetchError<TErr>>` discriminated union so you handle errors without `try/catch`.
+
+## Signature
+
+```typescript
+// Overload 1 — schema-inferred response type
+function okfetch<Options extends OkfetchOptions = OkfetchOptions>(
+  url: string,
+  options: Options
+): Promise<Result<OkfetchSuccess<Options, Infer<Options["outputSchema"]>>, OkfetchError<Infer<Options["apiErrorDataSchema"]>>>>;
+
+// Overload 2 — streaming
+function okfetch<TRes = unknown>(
+  url: string,
+  options: OkfetchOptions & { stream: true }
+): Promise<Result<ReadableStream<TRes>, OkfetchError<unknown>>>;
+
+// Overload 3 — manual generics
+function okfetch<TRes = unknown, TErr = unknown>(
+  url: string,
+  options: OkfetchOptions
+): Promise<Result<TRes, OkfetchError<TErr>>>;
+```
+
+## Parameters
+
+<ParamField path="url" type="string" required>
+  The URL to request. May be a full URL or a path segment when `baseURL` is provided in `options`. Path parameters in the form `/:param` are substituted from `options.params`.
+</ParamField>
+
+<ParamField path="options" type="OkfetchOptions" required>
+  Request configuration. See [OkfetchOptions](/reference/fetch/options) for all fields.
+</ParamField>
+
+## Return value
+
+Returns `Promise<Result<TSuccess, OkfetchError<TErr>>>`. The `Result` type is a discriminated union:
+
+```typescript
+type Result<T, E> =
+  | { ok: true;  value: T }
+  | { ok: false; error: E };
+```
+
+Check `result.ok` before accessing `result.value` or `result.error`.
+
+## URL building
+
+okfetch builds the final URL in this order:
+
+1. Combine `baseURL` + `url` (path is appended after base, preserving trailing slash behaviour).
+2. Substitute path parameters — segments like `/:userId` are replaced with values from `options.params`.
+3. Append `options.query` as a query string. Array values produce repeated keys: `?tags=a&tags=b`.
+
+```typescript
+// baseURL + path + params + query
+const result = await okfetch("/users/:id/posts", {
+  baseURL: "https://api.example.com",
+  params: { id: "42" },
+  query: { page: 1, tags: ["news", "tech"] },
+});
+// → GET https://api.example.com/users/42/posts?page=1&tags=news&tags=tech
+```
+
+## Examples
+
+### Minimal GET request
+
+```typescript
+import { okfetch } from "@okfetch/fetch";
+
+const result = await okfetch("https://api.example.com/users", {
+  method: "GET",
+});
+
+if (result.ok) {
+  console.log(result.value); // unknown
+} else {
+  console.error(result.error); // OkfetchError<unknown>
+}
+```
+
+### With schema validation
+
+```typescript
+import { okfetch } from "@okfetch/fetch";
+import { z } from "zod";
+
+const UserSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string().email(),
+});
+
+const result = await okfetch("https://api.example.com/users/42", {
+  method: "GET",
+  outputSchema: UserSchema,
+});
+
+if (result.ok) {
+  // result.value is typed as { id: string; name: string; email: string }
+  console.log(result.value.name);
+} else {
+  // result.error is OkfetchError<unknown>
+  // could be ApiError, ValidationError, FetchError, etc.
+  switch (result.error._tag) {
+    case "ValidationError":
+      console.error("Schema mismatch:", result.error.zodError);
+      break;
+    case "ApiError":
+      console.error("HTTP error:", result.error.statusCode);
+      break;
+    default:
+      console.error(result.error.message);
+  }
+}
+```
+
+### POST with body and error schema
+
+```typescript
+import { okfetch, validateClientErrors } from "@okfetch/fetch";
+import { z } from "zod";
+
+const ApiErrorSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+});
+
+const result = await okfetch("https://api.example.com/users", {
+  method: "POST",
+  body: { name: "Alice", email: "alice@example.com" },
+  outputSchema: z.object({ id: z.string() }),
+  apiErrorDataSchema: ApiErrorSchema,
+  shouldValidateError: validateClientErrors, // validate 4xx responses
+});
+
+if (!result.ok && result.error._tag === "ApiError") {
+  // result.error.data is typed as { code: string; message: string }
+  console.error(result.error.data?.message);
+}
+```
+
+### Streaming response
+
+```typescript
+const result = await okfetch<string>("https://api.example.com/stream", {
+  method: "GET",
+  stream: true,
+});
+
+if (result.ok) {
+  // result.value is ReadableStream<string>
+  const reader = result.value.getReader();
+}
+```

@@ -1,0 +1,207 @@
+---
+title: "Typed API client"
+description: "Use @okfetch/api to define a typed endpoint tree and get fully typed request and response handling."
+---
+
+The `@okfetch/api` package provides a structured way to define your API surface as a typed endpoint tree, then call those endpoints with full type inference for params, body, and response.
+
+## Installation
+
+<CodeGroup>
+
+```bash npm
+npm install @okfetch/api zod
+```
+
+```bash yarn
+yarn add @okfetch/api zod
+```
+
+```bash bun
+bun add @okfetch/api zod
+```
+
+</CodeGroup>
+
+## Defining endpoints
+
+Use `createEndpoints` to declare your API surface. Endpoints are organized as a nested object tree — top-level keys are resource names, and nested keys are operation names.
+
+```typescript
+import { createEndpoints } from "@okfetch/api";
+import { z } from "zod/v4";
+
+const userSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string(),
+});
+
+const endpoints = createEndpoints({
+  users: {
+    list: {
+      method: "GET",
+      path: "/users",
+      output: z.array(userSchema),
+      query: z.object({
+        page: z.number().optional(),
+        limit: z.number().optional(),
+      }),
+    },
+    get: {
+      method: "GET",
+      path: "/users/:id",
+      output: userSchema,
+      params: z.object({ id: z.number() }),
+    },
+    create: {
+      method: "POST",
+      path: "/users",
+      output: userSchema,
+      body: z.object({
+        name: z.string().min(1),
+        email: z.string().email(),
+      }),
+    },
+    update: {
+      method: "PUT",
+      path: "/users/:id",
+      output: userSchema,
+      params: z.object({ id: z.number() }),
+      body: z.object({
+        name: z.string().optional(),
+        email: z.string().email().optional(),
+      }),
+    },
+    delete: {
+      method: "DELETE",
+      path: "/users/:id",
+      params: z.object({ id: z.number() }),
+    },
+  },
+});
+```
+
+Each endpoint definition supports these fields:
+
+| Field            | Description                                          |
+| ---------------- | ---------------------------------------------------- |
+| `method`         | HTTP method                                          |
+| `path`           | Path starting with `/`, supports `:param` segments   |
+| `output`         | Zod schema for the response body                     |
+| `body`           | Zod schema for the request body                      |
+| `params`         | Zod schema for path parameters                       |
+| `query`          | Zod schema for query string parameters               |
+| `error`          | Per-endpoint error schema                            |
+| `requestOptions` | Per-endpoint fetch defaults (headers, timeout, etc.) |
+| `stream`         | Set to `true` to enable streaming                    |
+
+## Creating the API client
+
+Pass the endpoints and a `baseURL` to `createApi`.
+
+```typescript
+import { createApi } from "@okfetch/api";
+
+const api = createApi({
+  baseURL: "https://api.example.com",
+  endpoints,
+});
+```
+
+### With global options
+
+You can set shared headers, timeouts, validation behavior, and error handling at the client level.
+
+```typescript
+import { z } from "zod/v4";
+
+const apiErrorSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+});
+
+const api = createApi({
+  baseURL: "https://api.example.com",
+  endpoints,
+  headers: { "x-client": "web-app" },
+  timeout: 5000,
+  errorSchema: apiErrorSchema,
+  shouldValidateError: (status) => status >= 400 && status < 500,
+  validateInput: true,  // validate body/params/query before sending (default: true)
+  validateOutput: true, // validate response body against output schema
+});
+```
+
+## Making calls
+
+Call endpoints through the typed object tree. Each call returns a `Result`.
+
+```typescript
+// GET /users?page=1&limit=20
+const listResult = await api.users.list({ query: { page: 1, limit: 20 } });
+
+if (listResult.ok) {
+  listResult.value.forEach((user) => console.log(user.name));
+}
+
+// GET /users/42
+const getResult = await api.users.get({ params: { id: 42 } });
+
+if (getResult.ok) {
+  console.log(getResult.value.email);
+}
+
+// POST /users
+const createResult = await api.users.create({
+  body: { name: "Alice", email: "alice@example.com" },
+});
+
+if (createResult.ok) {
+  console.log("New user id:", createResult.value.id);
+}
+```
+
+## Per-call request overrides
+
+Pass a second argument to any call to override headers, timeout, or other fetch options for that specific request.
+
+```typescript
+const result = await api.users.get(
+  { params: { id: 1 } },
+  {
+    headers: { "x-request-id": crypto.randomUUID() },
+    timeout: 1000,
+  }
+);
+```
+
+This is useful for adding per-request tracing headers, adjusting timeouts for specific operations, or temporarily overriding auth.
+
+## Global error schema and validation
+
+When your API returns structured error bodies, define a shared `errorSchema` and `shouldValidateError` predicate on the client so every endpoint benefits from typed error data.
+
+```typescript
+const api = createApi({
+  baseURL: "https://api.example.com",
+  endpoints,
+  errorSchema: z.object({
+    code: z.string(),
+    message: z.string(),
+    details: z.array(z.string()).optional(),
+  }),
+  shouldValidateError: (status) => status >= 400,
+});
+
+const result = await api.users.get({ params: { id: 999 } });
+
+if (!result.ok) {
+  // result.error.data is typed based on errorSchema
+  console.error(`[${result.error.data?.code}] ${result.error.data?.message}`);
+}
+```
+
+<Note>
+  `shouldValidateError` receives the HTTP status code and should return `true` for responses where the body should be parsed as a structured error. Returning `false` skips error body parsing for that status.
+</Note>

@@ -1,0 +1,126 @@
+---
+title: "ApiService()"
+description: "Mixin factory for building service classes around a typed API client."
+---
+
+`ApiService` is a function exported by `@okfetch/api` that returns a class. Extend the returned class to create service objects that encapsulate API logic with a built-in `client` and `api` accessor.
+
+## Signature
+
+```typescript
+const ApiService = <TTree extends EndpointTree, TGlobalError = unknown>(
+  endpoints: TTree,
+  errorSchema?: ZodType<TGlobalError>
+): ApiServiceClass<TTree, TGlobalError>;
+```
+
+`ApiService` returns a **class constructor**, not an instance. You `extend` the returned class.
+
+## Parameters
+
+<ParamField path="endpoints" type="EndpointTree" required>
+  The endpoint tree. Typically the return value of [`createEndpoints()`](/reference/api/create-endpoints). Defines the shape of the `api` accessor on each instance.
+</ParamField>
+
+<ParamField path="errorSchema" type="ZodType<TGlobalError>">
+  Optional global Zod schema for error response bodies. Applied to every endpoint in this service.
+</ParamField>
+
+## Instance members
+
+Classes that extend `ApiService(...)` receive:
+
+- **`protected client`** — the `ApiClient<TTree, TGlobalError>` instance created internally. Access it in subclass methods.
+- **`public get api()`** — a getter that returns `this.client`. Use when exposing the client externally.
+
+## Constructor
+
+The generated base class constructor accepts `CreateApiOptions` minus `endpoints` and `errorSchema` (those are provided to `ApiService` itself):
+
+```typescript
+constructor(options: Omit<CreateApiOptions<TTree, TGlobalError>, "endpoints" | "errorSchema">)
+```
+
+Required fields: `baseURL`.
+
+## Example
+
+```typescript
+import { ApiService, createEndpoints } from "@okfetch/api";
+import { z } from "zod";
+
+const UserSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string().email(),
+});
+
+const ErrorSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+});
+
+const endpoints = createEndpoints({
+  list: {
+    method: "GET",
+    path: "/users",
+    output: z.array(UserSchema),
+  },
+  get: {
+    method: "GET",
+    path: "/users/:id",
+    params: z.object({ id: z.string() }),
+    output: UserSchema,
+  },
+  create: {
+    method: "POST",
+    path: "/users",
+    body: z.object({ name: z.string(), email: z.string().email() }),
+    output: UserSchema,
+  },
+});
+
+class UserService extends ApiService(endpoints, ErrorSchema) {
+  async getUser(id: string) {
+    return this.client.get({ params: { id } });
+  }
+
+  async listUsers() {
+    return this.client.list();
+  }
+
+  async createUser(data: { name: string; email: string }) {
+    return this.client.create({ body: data });
+  }
+}
+
+// Instantiate with the base URL and any global options
+const userService = new UserService({
+  baseURL: "https://api.example.com",
+  auth: { type: "bearer", token: process.env.API_TOKEN! },
+});
+
+// Use the service methods
+const result = await userService.getUser("42");
+if (result.ok) {
+  console.log(result.value.name);
+}
+
+// Or access the raw api client via the getter
+const list = await userService.api.list();
+```
+
+## Accessing `this.api` externally
+
+The `api` getter exposes the underlying `ApiClient` for use outside the class:
+
+```typescript
+const service = new UserService({ baseURL: "https://api.example.com" });
+
+// Direct client access — bypasses service methods
+const result = await service.api.list();
+```
+
+<Tip>
+  Use `this.client` inside the class and `service.api` outside. Both reference the same `ApiClient` instance.
+</Tip>
