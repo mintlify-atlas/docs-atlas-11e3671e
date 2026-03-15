@@ -1,0 +1,94 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "okfetch",
+  "projectDescription": "A lightweight, type-safe family of TypeScript HTTP packages that wraps the native fetch API with Zod validation, Result-based error handling, retries, auth, plugins, and a typed API client generator.",
+  "theme": "palm",
+  "primaryColor": "#040404",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "quickstart"]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/result-errors",
+              "concepts/validation",
+              "concepts/plugins",
+              "concepts/retries-timeouts",
+              "concepts/auth",
+              "concepts/streaming"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/direct-requests",
+              "guides/typed-api-client",
+              "guides/logging",
+              "guides/custom-plugins",
+              "guides/class-based-services"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "@okfetch/fetch",
+            "pages": [
+              "reference/fetch/okfetch",
+              "reference/fetch/options",
+              "reference/fetch/errors",
+              "reference/fetch/types"
+            ]
+          },
+          {
+            "group": "@okfetch/api",
+            "pages": [
+              "reference/api/create-endpoints",
+              "reference/api/create-api",
+              "reference/api/api-service",
+              "reference/api/types"
+            ]
+          },
+          {
+            "group": "@okfetch/logger",
+            "pages": [
+              "reference/logger/logger"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Result-based error handling via better-result — no thrown exceptions for expected HTTP failures",
+    "Zod-powered response and request validation (body, params, query, output)",
+    "Plugin lifecycle hooks: init, onRequest, onResponse, onSuccess, onFail, onRetry",
+    "Built-in retry strategies: fixed, linear, exponential",
+    "Auth helpers: bearer, basic, and custom prefix",
+    "SSE-style streaming with per-chunk Zod validation",
+    "Typed API client generator from schema-defined endpoint trees (@okfetch/api)",
+    "pino-based logging plugin (@okfetch/logger)"
+  ],
+  "publicApiSurface": [
+    "okfetch(url, options) — @okfetch/fetch",
+    "validateClientErrors — @okfetch/fetch",
+    "validateAllErrors — @okfetch/fetch",
+    "FetchError, TimeoutError, ApiError, ParseError, ValidationError, PluginError — @okfetch/fetch",
+    "OkfetchOptions, OkfetchPlugin, OkfetchPluginHooks, Auth, RetryOptions — @okfetch/fetch",
+    "createEndpoints(tree) — @okfetch/api",
+    "createApi(options) — @okfetch/api",
+    "ApiService(endpoints) — @okfetch/api",
+    "Endpoint, EndpointTree, EndpointCallOptions, ApiClient, ApiErrors — @okfetch/api",
+    "logger(options?) — @okfetch/logger"
+  ]
+}
